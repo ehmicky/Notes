@@ -239,13 +239,11 @@ SUB.TopicArn                      #'TOPIC_ARN'
 SUB.Attributes                    #SUB_ATTRS
 
 SUB.Protocol                      #'PROTOCOL':
-                                  #  - "A2A" (Application-to-application): HTTP, Lambda, SQS, Kinesis
-                                  #  - "A2P" (Application-to-person): email, SMS, push
+                                  #  - "A2A" (Application-to-application): 'http[s]', 'lambda', 'sqs', 'firehose'
+                                  #  - "A2P" (Application-to-person): 'email[-json]', 'sms', 'application'
                                   #     - "custom-managed": A2P or HTTP
                                   #Each documented below
 SUB.Endpoint                      #PROTOCOL-specific destination, defined below
-
-TOPIC_ATTRS.SubscriptionsDeleted  #NUM of Unsubscribe()
 
                                   ┌───────────────────────┐
                                   │   SUBSCRIPTION AUTH   │
@@ -307,12 +305,18 @@ CSUB_OPTS.endpoint                #SUB.Endpoint
 CTOPIC.grantSubscribe(YGRANTABLE)
  ->CGRANT                         #Allows sns:Subscribe
 
+                                  ┌──────────────────────────┐
+                                  │   SUBSCRIPTION METRICS   │
+                                  └──────────────────────────┘
+
+TOPIC_ATTRS.SubscriptionsDeleted  #NUM of Unsubscribe()
+
                                   ┌─────────────┐
                                   │   CONFIRM   │
                                   └─────────────┘
 
 SUB_CONFIRM                       #Confirms SUB creation
-                                  #Whether used or not is PROTOCOL-specific (each documented below)
+                                  #PROTOCOL-specific (each documented below)
                                   #Cannot delete SUB while pending
                                   #Delete SUB after 2 days if no SUB_CONFIRM
                                   #Max 5e3 (soft) pending SUB_CONFIRMs per ACCOUNT
@@ -340,6 +344,7 @@ NOTIFICATION.Token                #STR. Only set if NOTIFICATION.Type '*Confirma
 SUB_CONFIRM.Token                 #NOTIFICATION.Token. Authenticate anonymous ConfirmSubscription()
                                   #Not used by Unsubscribe()
                                   #  - however, forging requires knowing TOPIC_MID, ACCOUNT_ID and REGION
+                                  #  - but if could be a problem, should use SUB_CONFIRM.AuthenticateOnUnsubscribe true
 
 NOTIFICATION.SubscribeURL         #'URL' to anonymous ConfirmSubscription(), including NOTIFICATION.Token
                                   #I.e. 'https://sns.REGION.amazonaws.com/?Action=ConfirmSubscription&TopicArn=TOPIC_ARN&Token=STR'
@@ -349,8 +354,6 @@ NOTIFICATION.UnsubscribeURL       #'URL' to anonymous Unsubscribe()
                                   #With any NOTIFICATION.Type
 
 SUB_ATTRS.PendingConfirmation     #BOOL. Whether SUB_CONFIRM done
-TOPIC_ATTRS.SubscriptionsPending  #NUM of pending SUB_CONFIRMs
-TOPIC_ATTRS.SubscriptionsConfirmed#NUM of ConfirmSubscription()
 
 SUB.ReturnSubscriptionArn         #BOOL. If false (def), SUB.SubscriptionArn is 'pending confirmation' instead, if SUB_CONFIRM needed
 
@@ -366,316 +369,11 @@ ConfirmSubscription()             #Req: SUB_CONFIRM
                                   │   CONFIRM METRICS   │
                                   └─────────────────────┘
 
+TOPIC_ATTRS.SubscriptionsPending  #NUM of pending SUB_CONFIRMs
+TOPIC_ATTRS.SubscriptionsConfirmed#NUM of ConfirmSubscription()
+
 AWS/Usage/ResourceCount           #NUM of pending SUB_CONFIRMs
                                   #With DVAR Resource 'ApproximateNumberOfPendingSubscriptions'
-
-                                  ┌────────────┐
-                                  │   FILTER   │
-                                  └────────────┘
-
-SUB_ATTRS.FilterPolicy            #'FILTERS_JSON'. Filter which NOTIFICATIONs to receive
-                                  #Updates take up to 15m to enter into effect
-                                  #Max 200 per TOPIC (soft), 1e4 per ACCOUNT (soft)
-                                  #Max 256KB
-
-SUB_ATTRS.FilterPolicyScope       #Whether FILTERS are applied on:
-                                  #  - 'MessageAttributes' (def)
-                                  #     - not with DataType 'Binary'
-                                  #  - 'MessageBody': must be JSON
-
-FILTERS.*                         #And'd, i.e. must all match
-                                  #Empty MESSAGEs never match, even FILTER.exists false
-FILTERS.$or                       #FILTERS_ARR
-                                  #Can be combined with FILTERS.*, e.g. { PROP: ARR, $or: FILTERS_ARR }
-                                  #Can be nested
-                                  #Min 2 items
-
-FILTERS.PROP[.PROP...]            #Filters depending on FilterPolicyScope:
-                                  #  - MessageAttributes: MESSAGE_ATTRS.PROP
-                                  #  - MessageBody: MESSAGE_BODY.PROP[.PROP...]
-                                  #ARR of either:
-                                  #  - STR|NUM|BOOL|null: ARR.includes() (case-sensitive)
-                                  #  - FILTER (ARR has a single item)
-                                  #Max 5 PROPs
-                                  #Max 150 complexity, where complexity is the cartesian product of all FILTERS.*:
-                                  #  - NUM of PROPs (key)
-                                  #  - NUM of ARR items (value)
-                                  #  - if nested $or, compute its complexity recursively
-
-FILTER.anything-but               #ARR|FILTER. !ARR.includes() (case-sensitive)
-FILTER.equals-ignore-case         #STR. === (case-insensitive)
-FILTER.numeric                    #['OP', NUM[, 'OP2', NUM2]]
-                                  #OP is = > >= < <=
-                                  #Min|max NUM [-]1e9, 5 decimal points
-FILTER.exists                     #BOOL. !==|=== null|undefined
-FILTER.prefix|suffix              #STR. startsWith|endsWith(STR)
-FILTER.cidr                       #'CIDR'. Matches IP
-
-DATATYPE ARRAY ==>                #If DataType '*.Array':
-                                  #  - matches if any item does, i.e. ARR2.some(VAL => ...): FILTER.anything-but
-                                  #  - matches if all items do, i.e. ARR2.every(VAL => ...): ARR (ARR.includes())
-
-                                  ┌────────────────┐
-                                  │   FILTER IAC   │
-                                  └────────────────┘
-
-AWS::SNS::Subscription            #Includes RESPROPs: FilterPolicy OBJ, FilterDeliveryScope
-
-CSUB_OPTS.filterPolicy.PROP       #CFILTER, when SUB_ATTRS.FilterPolicyScope 'MessageAttributes'
-CSUB_OPTS
- .filterPolicyWithMessageBody
- .PROP                            #CNESTED_FILTER, when SUB_ATTRS.FilterPolicyScope 'MessageBody'
-
-FilterOrPolicy.filter
- (CFILTER)->CNESTED_FILTER        #FILTERS.PROP
-FilterOrPolicy.policy
- ({PROP: CNESTED_FILTER, ...})
- ->CNESTED_FILTER2                #FILTERS.PROP.PROP...
-
-new SubscriptionFilter(ARR)       #CFILTER. FILTERS.PROP
-                                  #Passes an ARR of VAL or FILTER
-
-SubscriptionFilter.stringFilter
- (OPTS)->CFILTER                  #
-OPTS.allowlist                    #ARR of VALs
-OPTS.denylist                     #ARR. {anything-but: ARR}
-OPTS.matchesPrefixes|Suffixes     #STR_ARR. Multiple {prefix|suffix: STR}
-
-SubscriptionFilter.numericFilter
- (OPTS)->CFILTER                  #
-OPTS.less|greaterThan[OrEqualTo]  #NUM. {numeric: ['OP', NUM]}
-OPTS.between.start|stop           #NUM. {numeric: ['>=', NUM, '<=', NUM2]}
-OPTS.betweenStrict.start|stop     #NUM. {numeric: ['>', NUM, '<', NUM2]}
-OPTS.allowlist                    #ARR. Multiple {numeric: ['=', VAL]}
-
-SubscriptionFilter.existsFilter()
- ->CFILTER                        #{exists: true}
-
-                                  ┌────────────────────┐
-                                  │   FILTER METRICS   │
-                                  └────────────────────┘
-
-AWS/SNS/
- NumberOfNotificationsFilteredOut #NUM of NOTIFICATIONs filtered out
-AWS/SNS/
- NumberOfNotificationsFilteredOut
- -MessageAttributes               #NUM of NOTIFICATIONs filtered out by MESSAGE_ATTRs
-AWS/SNS/
- NumberOfNotificationsFilteredOut
- -InvalidAttributes               #NUM of NOTIFICATIONs filtered out by MESSAGE_ATTRs due to them being invalid
-AWS/SNS/
- NumberOfNotificationsFilteredOut
- -NoMessageAttributes             #NUM of NOTIFICATIONs filtered out by MESSAGE_ATTRs due to not having any
-AWS/SNS/
- NumberOfNotificationsFilteredOut
- -MessageBody                     #NUM of NOTIFICATIONs filtered out by MESSAGE_BODY
-AWS/SNS/
- NumberOfNotificationsFilteredOut
- -InvalidMessageBody              #NUM of NOTIFICATIONs filtered out by MESSAGE_BODY due to it being invalid
-
-AWS/Usage/ResourceCount           #NUM of FILTER_POLICYs
-                                  #With DVAR Resource 'ApproximateNumberOfFilterPolicies'
-
-                                  ┌────────────────────────┐
-                                  │   FILTER METRICS IAC   │
-                                  └────────────────────────┘
-
-ICTOPIC.metricNumberOf
- NotificationsFilteredOut
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-ICTOPIC.metricNumberOf
- NotificationsFilteredOut
- InvalidAttributes
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-ICTOPIC.metricNumberOf
- NotificationsFilteredOut
- NoMessageAttributes
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-
-                                  ┌──────────────┐
-                                  │   THROTTLE   │
-                                  └──────────────┘
-
-MESSAGE THROTTLING ==>            #Max MESSAGEs per second to each TOPIC
-                                  #Not API calls, i.e. regardless of Publish[Batch]()
-                                  #Is:
-                                  #  - same REGION: 30000|9000|1500|300 (REGION-specific, soft) and 20MB/s
-                                  #  - cross-REGIONs: 1000 (soft) and 6MB/s
-                                  #  - FIFO SQS: 300/s per MESSAGE_GROUP
-                                  #  - SMS: 20 (soft)
-                                  #  - email: 10
-
-DELIVERY_POLICY.throttlePolicy    #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
- .maxReceivesPerSecond            #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
-                                  #  - dropped after 1h
-
-                                  ┌──────────────────┐
-                                  │   THROTTLE IAC   │
-                                  └──────────────────┘
-
-AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: throttlePolicy
-
-CDELIVERY_POLICY.throttlePolicy   #DELIVERY_POLICY.*
-
-                                  ┌──────────────────────┐
-                                  │   THROTTLE METRICS   │
-                                  └──────────────────────┘
-
-AWS/SNS/NumberOfMessagesPublished #NUM of MESSAGEs sent to TOPICs
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET, MALARM Min|MaxNumberOfMessagesPublished <|> CXALARM_OPTS.min|maxMessagesPublishedCount
-
-AWS/Usage/ResourceCount           #NUM of MESSAGEs sent to TOPICs
-                                  #With DVAR Resource 'NumberOfMessagesPublishedPerAccount'
-
-AWS/SNS/                          #NUM of NOTIFICATIONs successfully sent from TOPIC to SUBs
- NumberOfNotificationsDelivered   #Does not included filtered out MESSAGEs
-                                  #Difference with AWS/SNS/NumberOfMessagesPublished is backlog
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET
-
-                                  ┌──────────────────────────┐
-                                  │   THROTTLE METRICS IAC   │
-                                  └──────────────────────────┘
-
-ICTOPIC
- .metricNumberOfMessagesPublished
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-
-ICTOPIC.metricNumberOf
- NotificationsDelivered
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-
-                                  ┌───────────┐
-                                  │   RETRY   │
-                                  └───────────┘
-
-TOPIC_ATTRS.DeliveryPolicy        #'{PROTOCOL: DELIVERY_POLICY}' as JSON
-                                  #DELIVERY_POLICY.*Policy -> default*Policy
-SUB_ATTRS.DeliveryPolicy          #'DELIVERY_POLICY_JSON'
-TOPIC_ATTRS|SUB_ATTRS
- .EffectiveDeliveryPolicy         #Same but also shows default values
-
-DELIVERY_POLICY                   #Only with HTTP
-                                  #Other PROTOCOLs always use the default value
-DELIVERY_POLICY                   #BOOL (def: false). Ignores SUB_ATTRS.DeliveryPolicy, i.e. only use TOPIC_ATTRS.DeliveryPolicy
- .disableSubscriptionOverrides    #Seems to be undocumented
-
-DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send NOTIFICATIONs from TOPIC to SUB
-                                  #NOTIFICATION is considered failed once no more retries
-                                  #Retries "server-side errors":
-                                  #  - could not reach endpoint
-                                  #     - e.g. HTTP server down, or AWS outage
-                                  #  - 5** response
-                                  #Does not retry "client-side errors":
-                                  #  - invalid API call
-                                  #     - including no endpoint (e.g. deleted QUEUE)
-                                  #  - AWS auth error
-                                  #  - 4** response
-RETRY_POLICY.minDelayTarget       #NUM (in secs, min 1). Retry start delay
-                                  #Def 20s with HTTP, 10s with email|SMS|push, 1s else
-RETRY_POLICY.maxDelayTarget       #NUM (in secs, min minDelayTarget, max 1h). Retry end delay
-                                  #Def 10m with email|SMS|push, 20s else
-RETRY_POLICY.numRetries           #NUM. Max retries, including all phases
-                                  #Def 3 with HTTP, 50 with email|SMS|push, 100_015 else
-                                  #Max 100 with HTTP
-RETRY_POLICY.numNoDelayRetries    #NUM. "Immediate retries": first phase, without any delay
-                                  #Def 0 with HTTP|email|SMS|push, 3 else
-RETRY_POLICY.numMinDelayRetries   #NUM. "Pre-backoff retries": second phase, with minDelayTarget
-                                  #Def 0 with HTTP, 2 else
-RETRY_POLICY.backoffFunction      #"Backoff retries": third phase, going from minDelayTarget to maxDelayTarget
-                                  #One of (from linear to very exponential):
-                                  #  - 'LINEAR' (def with HTTP)
-                                  #  - 'ARITHMETIC'
-                                  #  - 'GEOMETRIC'
-                                  #  - 'EXPONENTIAL' (def else)
-RETRY_POLICY.numMaxDelayRetries   #NUM. "Post-backoff retries": fourth phase, with maxDelayTarget
-                                  #Def 0 with HTTP, 38 with email|SMS|push, 1e5 else
-
-                                  ┌───────────────┐
-                                  │   RETRY IAC   │
-                                  └───────────────┘
-
-AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: healthyRetryPolicy
-
-CSUB_OPTS.deliveryPolicy          #CDELIVERY_POLICY. SUB_ATTRS.DeliveryPolicy
-CDELIVERY_POLICY
- .healthyRetryPolicy              #CRETRY_POLICY. DELIVERY_POLICY.*
-CRETRY_POLICY.min|maxDelayTarget  #DURATION
-CRETRY_POLICY
- .num*Retries|backoffFunction     #RETRY_POLICY.*
-
-                                  ┌───────────────────┐
-                                  │   RETRY METRICS   │
-                                  └───────────────────┘
-
-AWS/SNS/                          #NUM of NOTIFICATIONs failed to be sent from TOPIC to SUBs
- NumberOfNotificationsFailed      #Does not included filtered out MESSAGEs
-                                  #With HTTP, includes retries too
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET, MALARM MessageNotificationsFailed > CXALARM_OPTS.maxNotificationsFailedCount
-
-                                  ┌───────────────────────┐
-                                  │   RETRY METRICS IAC   │
-                                  └───────────────────────┘
-
-ICTOPIC.metricNumberOf
- NotificationsFailed
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-
-                                  ┌───────────────────┐
-                                  │   RETRY LOGGING   │
-                                  └───────────────────┘
-
-LRES.attempts                     #NUM of retry attempts
-
-                                  ┌───────────────────────┐
-                                  │   DEAD-LETTER QUEUE   │
-                                  └───────────────────────┘
-
-SUB_ATTRS.RedrivePolicy           #'REDRIVE_POLICY_JSON'. Sends failed NOTIFICATIONs to SQS DLQ
-                                  #For both client|server-side errors
-
-REDRIVE_POLICY.deadLetterTargetArn#'QUEUE_ARN'
-                                  #Must have same ACCOUNT|REGION as SUB
-                                  #Must be [non-]FIFO if TOPIC is [non-]FIFO
-
-                                  ┌────────────────────────────┐
-                                  │   DEAD-LETTER QUEUE AUTH   │
-                                  └────────────────────────────┘
-
-PACTION sqs:SendMessage           #Must be allowed:
-                                  #  - on Resource QUEUE
-                                  #  - on Principal.Service sns.amazonaws.com
-                                  #  - COND_KEY aws:SourceArn TOPIC_ARN
-                                  #Must also allow kms:... if using SSE-KMS
-
-                                  ┌───────────────────────────────┐
-                                  │   DEAD-LETTER QUEUE METRICS   │
-                                  └───────────────────────────────┘
-
-AWS/SNS/
-NumberOfNotificationsRedrivenToDlq#NUM of NOTIFICATIONs moved to DLQ
-
-AWS/SNS/NumberOfNotifications
- FailedToRedriveToDlq             #NUM of NOTIFICATIONs which failed to be moved to DLQ
-
-                                  ┌───────────────────────────┐
-                                  │   DEAD-LETTER QUEUE IAC   │
-                                  └───────────────────────────┘
-
-AWS::SNS::Subscription            #Includes RESPROPs: RedrivePolicy: DeadLetterTargetArn
-
-CSUB[_OPTS].deadLetterQueue       #ICQUEUE. SUB_ATTRS.RedrivePolicy
-                                  #Automatically adds relevant permissions using CQUEUE_MPOLICY
-
-                                  ┌────────────────────────────┐
-                                  │   DEAD-LETTER QUEUE LINT   │
-                                  └────────────────────────────┘
-
-cfn-lint-serverless aws_sns_
- topic_subscription_redrive_policy
-ES7000                            #SUB_ATTRS.RedrivePolicy must be set
 
                                   ┌─────────────┐
                                   │   MESSAGE   │
@@ -692,7 +390,7 @@ MESSAGE.Message                   #'MESSAGE_BODY'
 
 MESSAGE.MessageStructure          #If 'json' (def: undefined), MESSAGE_BODY is 'OBJ_JSON' of {PROTOCOL|default: 'MESSAGE_BODY', ...}
                                   #I.e. PROTOCOL-specific MESSAGE_BODY
-                                  #One `default` is required
+                                  #`default` is required
 
 MESSAGE
  .MessageAttributes.MESSAGE_ATTR  #ATTR_VALUE. Custom metadata
@@ -857,6 +555,7 @@ NOTIFICATION.Message              #MESSAGE.Message
                                   #  - QUERY SNS JMESPath 'QUERY' (see its doc)
                                   #  - @middy/event-normalizer (see its doc)
                                   #     - including when invoked from SQS SUBSCRIPTION
+
 NOTIFICATION.TopicArn|MessageId
  |MessageAttributes|Subject       #MESSAGE.*
 NOTIFICATION.MessageAttributes    #MESSAGE_ATTRS except DataType -> Type, StringValue|BinaryValue -> Value
@@ -868,9 +567,6 @@ NOTIFICATION.MessageAttributes    #MESSAGE_ATTRS except DataType -> Type, String
 AWS::SNS::Subscription            #Includes RESPROPs: RawMessageDelivery
 
 CSUB_OPTS.rawMessageDelivery      #SUB_ATTRS.RawMessageDelivery
-
-CSUB_OPTS.json                    #BOOL (def: false). Whether 'PROTOCOL' is 'email' or 'email-json'
-                                  #Only with new EmailSubscription()
 
                                   ┌───────────────┐
                                   │   INTEGRITY   │
@@ -926,6 +622,317 @@ sns-validator                     #Original project sns-payload-validator is bas
 AWS::SNS::Topic                   #Includes RESPROPs: SignatureVersion
 
 CTOPIC_OPTS.signatureVersion      #TOPIC_ATTRS.SignatureVersion
+
+                                  ┌────────────┐
+                                  │   FILTER   │
+                                  └────────────┘
+
+SUB_ATTRS.FilterPolicy            #'FILTERS_JSON'. Filter which NOTIFICATIONs to receive
+                                  #Updates take up to 15m to enter into effect
+                                  #Max 200 per TOPIC (soft), 1e4 per ACCOUNT (soft)
+                                  #Max 256KB
+
+SUB_ATTRS.FilterPolicyScope       #Whether FILTERS are applied on:
+                                  #  - 'MessageAttributes' (def)
+                                  #     - not with DataType 'Binary'
+                                  #  - 'MessageBody'
+                                  #     - must be JSON
+
+FILTERS.*                         #And'd, i.e. must all match
+                                  #Empty MESSAGEs never match, even FILTER.exists false
+FILTERS.$or                       #FILTERS_ARR
+                                  #Can be combined with FILTERS.*, e.g. { PROP: ARR, $or: FILTERS_ARR }
+                                  #Can be nested
+                                  #Min 2 items
+
+FILTERS.PROP[.PROP...]            #Filters depending on FilterPolicyScope:
+                                  #  - MessageAttributes: MESSAGE_ATTRS.PROP
+                                  #  - MessageBody: MESSAGE_BODY.PROP[.PROP...]
+                                  #ARR of either:
+                                  #  - STR|NUM|BOOL|null: ARR.includes() (case-sensitive)
+                                  #  - FILTER (ARR has a single item)
+                                  #Max 5 PROPs
+                                  #Max 150 complexity, where complexity is the cartesian product of all FILTERS.*:
+                                  #  - NUM of PROPs (key)
+                                  #  - NUM of ARR items (value)
+                                  #  - if nested $or, compute its complexity recursively
+
+FILTER.anything-but               #ARR|FILTER. !ARR.includes() (case-sensitive)
+FILTER.equals-ignore-case         #STR. === (case-insensitive)
+FILTER.numeric                    #['OP', NUM[, 'OP2', NUM2]]
+                                  #OP is = > >= < <=
+                                  #Min|max NUM [-]1e9, 5 decimal points
+FILTER.exists                     #BOOL. !==|=== null|undefined
+FILTER.prefix|suffix              #STR. startsWith|endsWith(STR)
+FILTER.cidr                       #'CIDR'. Matches IP
+
+DATATYPE ARRAY ==>                #If DataType '*.Array':
+                                  #  - matches if any item does, i.e. ARR2.some(VAL => ...): FILTER.anything-but
+                                  #  - matches if all items do, i.e. ARR2.every(VAL => ...): ARR (ARR.includes())
+
+                                  ┌────────────────┐
+                                  │   FILTER IAC   │
+                                  └────────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: FilterPolicy OBJ, FilterDeliveryScope
+
+CSUB_OPTS.filterPolicy.PROP       #CFILTER, when SUB_ATTRS.FilterPolicyScope 'MessageAttributes'
+CSUB_OPTS
+ .filterPolicyWithMessageBody
+ .PROP                            #CNESTED_FILTER, when SUB_ATTRS.FilterPolicyScope 'MessageBody'
+
+FilterOrPolicy.filter
+ (CFILTER)->CNESTED_FILTER        #FILTERS.PROP
+FilterOrPolicy.policy
+ ({PROP: CNESTED_FILTER, ...})
+ ->CNESTED_FILTER2                #FILTERS.PROP.PROP...
+
+new SubscriptionFilter(ARR)       #CFILTER. FILTERS.PROP
+                                  #Passes an ARR of VAL or FILTER
+
+SubscriptionFilter.stringFilter
+ (OPTS)->CFILTER                  #
+OPTS.allowlist                    #ARR of VALs
+OPTS.denylist                     #ARR. {anything-but: ARR}
+OPTS.matchesPrefixes|Suffixes     #STR_ARR. Multiple {prefix|suffix: STR}
+
+SubscriptionFilter.numericFilter
+ (OPTS)->CFILTER                  #
+OPTS.less|greaterThan[OrEqualTo]  #NUM. {numeric: ['OP', NUM]}
+OPTS.between.start|stop           #NUM. {numeric: ['>=', NUM, '<=', NUM2]}
+OPTS.betweenStrict.start|stop     #NUM. {numeric: ['>', NUM, '<', NUM2]}
+OPTS.allowlist                    #ARR. Multiple {numeric: ['=', VAL]}
+
+SubscriptionFilter.existsFilter()
+ ->CFILTER                        #{exists: true}
+
+                                  ┌────────────────────┐
+                                  │   FILTER METRICS   │
+                                  └────────────────────┘
+
+AWS/SNS/
+ NumberOfNotificationsFilteredOut #NUM of NOTIFICATIONs filtered out
+AWS/SNS/
+ NumberOfNotificationsFilteredOut
+ -MessageAttributes               #NUM of NOTIFICATIONs filtered out by MESSAGE_ATTRs
+AWS/SNS/
+ NumberOfNotificationsFilteredOut
+ -InvalidAttributes               #NUM of NOTIFICATIONs filtered out by MESSAGE_ATTRs due to them being invalid
+AWS/SNS/
+ NumberOfNotificationsFilteredOut
+ -NoMessageAttributes             #NUM of NOTIFICATIONs filtered out by MESSAGE_ATTRs due to not having any
+AWS/SNS/
+ NumberOfNotificationsFilteredOut
+ -MessageBody                     #NUM of NOTIFICATIONs filtered out by MESSAGE_BODY
+AWS/SNS/
+ NumberOfNotificationsFilteredOut
+ -InvalidMessageBody              #NUM of NOTIFICATIONs filtered out by MESSAGE_BODY due to it being invalid
+
+AWS/Usage/ResourceCount           #NUM of FILTER_POLICYs
+                                  #With DVAR Resource 'ApproximateNumberOfFilterPolicies'
+
+                                  ┌────────────────────────┐
+                                  │   FILTER METRICS IAC   │
+                                  └────────────────────────┘
+
+ICTOPIC.metricNumberOf
+ NotificationsFilteredOut
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+ICTOPIC.metricNumberOf
+ NotificationsFilteredOut
+ InvalidAttributes
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+ICTOPIC.metricNumberOf
+ NotificationsFilteredOut
+ NoMessageAttributes
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+                                  ┌──────────────┐
+                                  │   THROTTLE   │
+                                  └──────────────┘
+
+MESSAGE THROTTLING ==>            #Max MESSAGEs per second to each TOPIC
+                                  #Not API calls, i.e. regardless of Publish[Batch]()
+                                  #Is:
+                                  #  - same REGION: 30000|9000|1500|300 (REGION-specific, soft) and 20MB/s
+                                  #  - cross-REGIONs: 1000 (soft) and 6MB/s
+                                  #  - FIFO SQS: 300/s per MESSAGE_GROUP
+                                  #  - SMS: 20 (soft)
+                                  #  - email: 10
+                                  #Can workaround limit by using multiple TOPICs
+
+DELIVERY_POLICY.throttlePolicy    #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
+ .maxReceivesPerSecond            #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
+                                  #  - dropped after 1h
+
+                                  ┌──────────────────┐
+                                  │   THROTTLE IAC   │
+                                  └──────────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: throttlePolicy
+
+CDELIVERY_POLICY.throttlePolicy   #DELIVERY_POLICY.*
+
+                                  ┌──────────────────────┐
+                                  │   THROTTLE METRICS   │
+                                  └──────────────────────┘
+
+AWS/SNS/NumberOfMessagesPublished #NUM of MESSAGEs sent to TOPICs
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET, MALARM Min|MaxNumberOfMessagesPublished <|> CXALARM_OPTS.min|maxMessagesPublishedCount
+
+AWS/Usage/ResourceCount           #NUM of MESSAGEs sent to TOPICs
+                                  #With DVAR Resource 'NumberOfMessagesPublishedPerAccount'
+
+AWS/SNS/                          #NUM of NOTIFICATIONs successfully sent from TOPIC to SUBs
+ NumberOfNotificationsDelivered   #Does not included filtered out MESSAGEs
+                                  #Difference with AWS/SNS/NumberOfMessagesPublished is backlog
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET
+
+                                  ┌──────────────────────────┐
+                                  │   THROTTLE METRICS IAC   │
+                                  └──────────────────────────┘
+
+ICTOPIC
+ .metricNumberOfMessagesPublished
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+ICTOPIC.metricNumberOf
+ NotificationsDelivered
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+                                  ┌───────────┐
+                                  │   RETRY   │
+                                  └───────────┘
+
+TOPIC_ATTRS.DeliveryPolicy        #'{PROTOCOL: DELIVERY_POLICY}' as JSON
+                                  #DELIVERY_POLICY.*Policy -> default*Policy
+SUB_ATTRS.DeliveryPolicy          #'DELIVERY_POLICY_JSON'
+TOPIC_ATTRS|SUB_ATTRS
+ .EffectiveDeliveryPolicy         #Same but also shows default values
+
+DELIVERY_POLICY                   #Can only be set with HTTP
+                                  #Other PROTOCOLs always use the default value
+DELIVERY_POLICY                   #BOOL (def: false). Ignores SUB_ATTRS.DeliveryPolicy, i.e. only use TOPIC_ATTRS.DeliveryPolicy
+ .disableSubscriptionOverrides    #Seems to be undocumented
+
+DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send NOTIFICATIONs from TOPIC to SUB
+                                  #NOTIFICATION is considered failed once no more retries
+                                  #Retries "server-side errors":
+                                  #  - could not reach endpoint
+                                  #     - e.g. HTTP server down, or AWS outage
+                                  #  - 5** response
+                                  #Does not retry "client-side errors":
+                                  #  - invalid API call
+                                  #     - including no endpoint (e.g. deleted QUEUE)
+                                  #  - AWS auth error
+                                  #  - 4** response
+RETRY_POLICY.minDelayTarget       #NUM (in secs, min 1). Retry start delay
+                                  #Def 20s with HTTP, 10s with email|SMS|push, 1s else
+RETRY_POLICY.maxDelayTarget       #NUM (in secs, min minDelayTarget, max 1h). Retry end delay
+                                  #Def 10m with email|SMS|push, 20s else
+RETRY_POLICY.numRetries           #NUM. Max retries, including all phases
+                                  #Def 3 with HTTP, 50 with email|SMS|push, 100_015 else
+                                  #Max 100 with HTTP
+RETRY_POLICY.numNoDelayRetries    #NUM. "Immediate retries": first phase, without any delay
+                                  #Def 0 with HTTP|email|SMS|push, 3 else
+RETRY_POLICY.numMinDelayRetries   #NUM. "Pre-backoff retries": second phase, with minDelayTarget
+                                  #Def 0 with HTTP, 2 else
+RETRY_POLICY.backoffFunction      #"Backoff retries": third phase, going from minDelayTarget to maxDelayTarget
+                                  #One of (from linear to very exponential):
+                                  #  - 'LINEAR' (def with HTTP)
+                                  #  - 'ARITHMETIC'
+                                  #  - 'GEOMETRIC'
+                                  #  - 'EXPONENTIAL' (def else)
+RETRY_POLICY.numMaxDelayRetries   #NUM. "Post-backoff retries": fourth phase, with maxDelayTarget
+                                  #Def 0 with HTTP, 38 with email|SMS|push, 1e5 else
+
+                                  ┌───────────────┐
+                                  │   RETRY IAC   │
+                                  └───────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: healthyRetryPolicy
+
+CSUB_OPTS.deliveryPolicy          #CDELIVERY_POLICY. SUB_ATTRS.DeliveryPolicy
+CDELIVERY_POLICY
+ .healthyRetryPolicy              #CRETRY_POLICY. DELIVERY_POLICY.*
+CRETRY_POLICY.min|maxDelayTarget  #DURATION
+CRETRY_POLICY
+ .num*Retries|backoffFunction     #RETRY_POLICY.*
+
+                                  ┌───────────────────┐
+                                  │   RETRY METRICS   │
+                                  └───────────────────┘
+
+AWS/SNS/                          #NUM of NOTIFICATIONs that failed to be sent from TOPIC to SUBs
+ NumberOfNotificationsFailed      #Does not included filtered out MESSAGEs
+                                  #With HTTP, includes retries too
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET, MALARM MessageNotificationsFailed > CXALARM_OPTS.maxNotificationsFailedCount
+
+                                  ┌───────────────────────┐
+                                  │   RETRY METRICS IAC   │
+                                  └───────────────────────┘
+
+ICTOPIC.metricNumberOf
+ NotificationsFailed
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+                                  ┌───────────────────┐
+                                  │   RETRY LOGGING   │
+                                  └───────────────────┘
+
+LRES.attempts                     #NUM of retry attempts
+
+                                  ┌───────────────────────┐
+                                  │   DEAD-LETTER QUEUE   │
+                                  └───────────────────────┘
+
+SUB_ATTRS.RedrivePolicy           #'REDRIVE_POLICY_JSON'. Sends failed NOTIFICATIONs to SQS DLQ
+                                  #For both client|server-side errors
+                                  #After no more retries
+
+REDRIVE_POLICY.deadLetterTargetArn#'QUEUE_ARN'
+                                  #Must be in same ACCOUNT|REGION as SUB
+                                  #Must be [non-]FIFO if TOPIC is [non-]FIFO
+
+                                  ┌────────────────────────────┐
+                                  │   DEAD-LETTER QUEUE AUTH   │
+                                  └────────────────────────────┘
+
+PACTION sqs:SendMessage           #Must be allowed:
+                                  #  - for Resource QUEUE
+                                  #  - on Principal.Service sns.amazonaws.com
+                                  #  - COND_KEY aws:SourceArn TOPIC_ARN
+                                  #Must also allow kms:... if using SSE-KMS
+
+                                  ┌───────────────────────────────┐
+                                  │   DEAD-LETTER QUEUE METRICS   │
+                                  └───────────────────────────────┘
+
+AWS/SNS/
+NumberOfNotificationsRedrivenToDlq#NUM of NOTIFICATIONs moved to DLQ
+
+AWS/SNS/NumberOfNotifications
+ FailedToRedriveToDlq             #NUM of NOTIFICATIONs which failed to be moved to DLQ
+
+                                  ┌───────────────────────────┐
+                                  │   DEAD-LETTER QUEUE IAC   │
+                                  └───────────────────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: RedrivePolicy: DeadLetterTargetArn
+
+CSUB[_OPTS].deadLetterQueue       #ICQUEUE. SUB_ATTRS.RedrivePolicy
+                                  #Automatically adds relevant permissions using CQUEUE_MPOLICY
+
+                                  ┌────────────────────────────┐
+                                  │   DEAD-LETTER QUEUE LINT   │
+                                  └────────────────────────────┘
+
+cfn-lint-serverless aws_sns_
+ topic_subscription_redrive_policy
+ES7000                            #SUB_ATTRS.RedrivePolicy must be set
 
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
@@ -1538,6 +1545,9 @@ AWS::SNS::Topic                   #Includes RESPROPs: DisplayName
 
 new EmailSubscription
  ('EMAIL_ADDRESS'[, CSUB_OPTS])   #CCSUB
+
+CSUB_OPTS.json                    #BOOL (def: false). Whether 'PROTOCOL' is 'email' or 'email-json'
+                                  #Only with new EmailSubscription()
 
 CTOPIC_OPTS.displayName           #TOPIC_ATTRS.*
 
