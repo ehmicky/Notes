@@ -24,6 +24,9 @@ TODO:
      - see https://github.com/Admiral-Piett/goaws README for SNS
   - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
      - already done:
+        - Message delivery:
+           - Raw message delivery
+           - Message delivery retries
         - Message data protection
         - Security > Logging and monitoring
   - https://aws.amazon.com/sns/faqs
@@ -54,13 +57,6 @@ PAGINATION ==>                    #Uses REQ|RES.NextToken
                                   #  - ListSMSSandboxPhoneNumbers() (def|max 100)
                                   #No pagination: ListTagsForResource()
                                   #Others: page size always 100
-
-MESSAGE THROTTLING ==>            #MESSAGEs per seconds, not API calls, i.e. regardless of Publish[Batch]()
-                                  #Is:
-                                  #  - same REGION: 30000|9000|1500|300 (REGION-specific, soft) and 20MB/s
-                                  #  - cross-REGIONs: 1000 (soft) and 6MB/s
-                                  #  - SMS: 20 (soft)
-                                  #  - email: 10
 
 THROTTLING ==>                    #3000|900|150|30/s (REGION-specific, soft): *Topic*(), ConfirmSubscription(),
                                   # *SubscriptionAttributes(), GetDataProtectionPolicy(), *Platform|Endpoint*()
@@ -358,6 +354,16 @@ AWS::SNS::Subscription            #RESPROPs:
 AWS::SNS::Topic                   #Includes RESPROPs: Subscription OBJ_ARR: Protocol, Endpoint
                                   #Creates SUB but does not delete it, i.e. meant for SUBs created in other STACKs
 
+new Subscription
+ (...CARGS, CSUB_OPTS)            #CSUB
+ICTOPIC.addSubscription(CCSUB)
+ ->CSUB                           #
+
+CSUB_OPTS.topic                   #ICTOPIC. SUB.TopicArn
+CSUB_OPTS.protocol                #SUB.Protocol
+CSUB_OPTS.endpoint                #SUB.Endpoint
+CSUB_OPTS.region                  #'REGION'
+
 CTOPIC.grantSubscribe(YGRANTABLE)
  ->CGRANT                         #Allows sns:Subscribe
 
@@ -463,39 +469,114 @@ ICTOPIC.metricNumberOf
  NoMessageAttributes
  ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
 
+                                  ┌──────────────┐
+                                  │   THROTTLE   │
+                                  └──────────────┘
+
+MESSAGE THROTTLING ==>            #Max MESSAGEs per second to each TOPIC
+                                  #Not API calls, i.e. regardless of Publish[Batch]()
+                                  #Is:
+                                  #  - same REGION: 30000|9000|1500|300 (REGION-specific, soft) and 20MB/s
+                                  #  - cross-REGIONs: 1000 (soft) and 6MB/s
+                                  #  - SMS: 20 (soft)
+                                  #  - email: 10
+
+DELIVERY_POLICY.throttlePolicy    #NUM (def: unlimited). Max MESSAGEs per second from TOPIC to this SUB
+ .maxReceivesPerSecond            #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
+
+                                  ┌──────────────────┐
+                                  │   THROTTLE IAC   │
+                                  └──────────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: ThrottlePolicy
+
+                                  ┌──────────────────────┐
+                                  │   THROTTLE METRICS   │
+                                  └──────────────────────┘
+
+AWS/SNS/NumberOfMessagesPublished #NUM of MESSAGEs sent to TOPICs
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET, MALARM Min|MaxNumberOfMessagesPublished <|> CXALARM_OPTS.min|maxMessagesPublishedCount
+
+AWS/Usage/ResourceCount           #NUM of MESSAGEs sent to TOPICs
+                                  #With DVAR Resource 'NumberOfMessagesPublishedPerAccount'
+
+AWS/SNS/                          #NUM of MESSAGEs successfully sent from SUBs
+ NumberOfNotificationsDelivered   #Does not included filtered out MESSAGEs
+                                  #Difference with AWS/SNS/NumberOfMessagesPublished is backlog
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET
+
                                   ┌───────────┐
                                   │   RETRY   │
                                   └───────────┘
 
-TOPIC_ATTRS|SUB_ATTRS             #'DELIVERY_POLICY_JSON'. How to retry on delivery failure
- .DeliveryPolicy                  #MESSAGE is considered failed once no more retries
-                                  #Can only be customized with HTTP
-                                  #However, other PROTOCOLs use retry default settings
 TOPIC_ATTRS|SUB_ATTRS
- .EffectiveDeliveryPolicy         #Same but adds default values???
+ .DeliveryPolicy                  #'DELIVERY_POLICY_JSON'
+TOPIC_ATTRS|SUB_ATTRS
+ .EffectiveDeliveryPolicy         #Same but also shows default values
 
-DELIVERY_POLICY
- .requestPolicy.headerContentType #'MIME' among 'text/plain', 'application/json', 'application/xml'
-DELIVERY_POLICY.throttlePolicy
- .maxReceivesPerSecond            #NUM
-DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY
-RETRY_POLICY.minDelayTarget       #NUM
-RETRY_POLICY.maxDelayTarget       #NUM
-RETRY_POLICY.numRetries           #NUM
-RETRY_POLICY.numMaxDelayRetries   #NUM
-RETRY_POLICY.backoffFunction      #One of 'linear', 'arithmetic', 'geometric', 'exponential'
+DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send MESSAGE from TOPIC to SUB
+                                  #MESSAGE is considered failed once no more retries
+                                  #Can only be customized with HTTP: other PROTOCOLs always use the default value
+RETRY_POLICY.minDelayTarget       #NUM (in secs, min 1). Retry start delay
+                                  #Def 20s with HTTP, 10s with email|SMS|APP, 1s else
+RETRY_POLICY.maxDelayTarget       #NUM (in secs, min minDelayTarget, max 1h). Retry end delay
+                                  #Def 10m with email|SMS|APP, 20s else
+RETRY_POLICY.numRetries           #NUM. Max retries, including all phases
+                                  #Def 3 with HTTP, 50 with email|SMS|APP, 100_015 else
+                                  #Max 100 with HTTP
+RETRY_POLICY.numNoDelayRetries    #NUM. "Immediate retries": first phase, without any delay
+                                  #Def 0 with HTTP|email|SMS|APP, 3 else
+RETRY_POLICY.numMinDelayRetries   #NUM. "Pre-backoff retries": second phase, with minDelayTarget
+                                  #Def 0 with HTTP, 2 else
+RETRY_POLICY.backoffFunction      #"Backoff retries": third phase, going from minDelayTarget to maxDelayTarget
+                                  #One of (from linear to very exponential):
+                                  #  - 'LINEAR' (def with HTTP)
+                                  #  - 'ARITHMETIC'
+                                  #  - 'GEOMETRIC'
+                                  #  - 'EXPONENTIAL' (def else)
+RETRY_POLICY.numMaxDelayRetries   #NUM. "Post-backoff retries": fourth phase, with maxDelayTarget
+                                  #Def 0 with HTTP, 38 with email|SMS|APP, 1e5 else
 
                                   ┌───────────────┐
                                   │   RETRY IAC   │
                                   └───────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy DELIVERY_POLICY_OBJ
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: HealthyRetryPolicy
+
+CSUB_OPTS.deliveryPolicy          #CDELIVERY_POLICY. SUB_ATTRS.DeliveryPolicy
+CDELIVERY_POLICY.throttlePolicy   #DELIVERY_POLICY.*
+CDELIVERY_POLICY
+ .healthyRetryPolicy              #CRETRY_POLICY. DELIVERY_POLICY.*
+CRETRY_POLICY.min|maxDelayTarget  #DURATION
+CRETRY_POLICY
+ .num*Retries|backoffFunction     #RETRY_POLICY.*
+
+                                  ┌───────────────────┐
+                                  │   RETRY METRICS   │
+                                  └───────────────────┘
+
+AWS/SNS/                          #NUM of MESSAGEs failed to be sent from SUBs
+ NumberOfNotificationsFailed      #Does not included filtered out MESSAGEs
+                                  #With HTTP, includes retries too
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET, MALARM MessageNotificationsFailed > CXALARM_OPTS.maxNotificationsFailedCount
 
                                   ┌───────────────────────┐
                                   │   DEAD-LETTER QUEUE   │
                                   └───────────────────────┘
 
 SUB_ATTRS.RedrivePolicy           #'REDRIVE_POLICY_JSON'. Sends failed MESSAGEs to SQS DLQ
+
+                                  ┌────────────────────────────┐
+                                  │   DEAD-LETTER QUEUE AUTH   │
+                                  └────────────────────────────┘
+
+PACTION sqs:SendMessage           #Must be allowed:
+                                  #  - on Resource QUEUE
+                                  #  - on Principal.Service sns.amazonaws.com
+                                  #  - COND_KEY aws:SourceArn TOPIC_ARN
 
                                   ┌───────────────────────────────┐
                                   │   DEAD-LETTER QUEUE METRICS   │
@@ -511,7 +592,10 @@ AWS/SNS/NumberOfNotifications
                                   │   DEAD-LETTER QUEUE IAC   │
                                   └───────────────────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: RedrivePolicy OBJ
+AWS::SNS::Subscription            #Includes RESPROPs: RedrivePolicy REDRIVE_POLICY_OBJ
+
+CSUB_OPTS.deadLetterQueue         #ICQUEUE
+                                  #Automatically adds relevant permissions using CQUEUE_MPOLICY
 
                                   ┌────────────────────────────┐
                                   │   DEAD-LETTER QUEUE LINT   │
@@ -546,6 +630,10 @@ ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Num
 ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
 
+SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). Use MESSAGE_BODY as LMESSAGE
+                                  #As opposed to setting LMESSAGE.* including LMESSAGE.Message 'MESSAGE_BODY'
+                                  #Only for HTTP, SQS, Firehose
+
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
                                   └─────────────────┘
@@ -566,6 +654,10 @@ EXTENDED CLIENT LIBRARY ==>       #Client built on top of Java|Python SDK, that 
                                   ┌─────────────────┐
                                   │   MESSAGE IAC   │
                                   └─────────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: RawMessageDelivery
+
+CSUB_OPTS.rawMessageDelivery      #SUB_ATTRS.RawMessageDelivery
 
 CTOPIC.grantPublish(YGRANTABLE)
  ->CGRANT                         #Allows sns:Publish
@@ -599,24 +691,6 @@ AWS::Serverless::Connector        #Can be used with:
                                   ┌─────────────────────┐
                                   │   MESSAGE METRICS   │
                                   └─────────────────────┘
-
-AWS/SNS/NumberOfMessagesPublished #NUM of MESSAGEs sent to TOPICs
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET, MALARM Min|MaxNumberOfMessagesPublished <|> CXALARM_OPTS.min|maxMessagesPublishedCount
-
-AWS/Usage/ResourceCount           #NUM of MESSAGEs sent to TOPICs
-                                  #With DVAR Resource 'NumberOfMessagesPublishedPerAccount'
-
-AWS/SNS/                          #NUM of MESSAGEs successfully sent from SUBs
- NumberOfNotificationsDelivered   #Does not included filtered out MESSAGEs
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET
-
-AWS/SNS/                          #NUM of MESSAGEs failed to be sent from SUBs
- NumberOfNotificationsFailed      #Does not included filtered out MESSAGEs
-                                  #With HTTP, includes retries too
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET, MALARM MessageNotificationsFailed > CXALARM_OPTS.maxNotificationsFailedCount
 
 AWS/SNS/PublishSize               #Size of MESSAGEs
                                   #Excludes failed ones
@@ -939,13 +1013,20 @@ AWS/SNS/MessagesWith[No]Findings  #NUM of MESSAGEs matching MASK_OP.Audit.[No]Fi
 SUB.Protocol                      #'http/s'. Send using HTTP request, with POST
 SUB.Endpoint                      #'URL' to send to
 
-SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). No need to process JSON???
+DELIVERY_POLICY                   #Content-Type [C] of MESSAGEs
+ .requestPolicy.headerContentType #'MIME' among 'text/plain' (def), 'application/json', 'application/xml'
+                                  #If SUB_ATTRS.RawMessageDelivery true, can also be 'text/html|css|xml|csv',
+                                  #'application/octet-stream', 'application/x-www-form-urlencoded' or 'application/atom|soap|xhtml+xml'
+
+x-amz-sns-rawdelivery: true [C]   #Set if SUB_ATTRS.RawMessageDelivery true (see above)
 
                                   ┌──────────────┐
                                   │   HTTP IAC   │
                                   └──────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: RawMessageDelivery
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: RequestPolicy
+
+CDELIVERY_POLICY.requestPolicy    #DELIVERY_POLICY.*
 
                                   ┌────────────┐
                                   │   LAMBDA   │
@@ -1013,9 +1094,9 @@ LMESSAGE.SigningCertURL           #URL to encryption PEM
 SUB.Protocol                      #'sqs'. Send to a SQS QUEUE
 SUB.Endpoint                      #'QUEUE_ARN'
 
-SUB_ATTRS.RawMessageDelivery      #Like above
-
 MESSAGE_BODY                      #LMESSAGE (see above)
+
+SUB_ATTRS.RawMessageDelivery      #If true (see above), max 10 MESSAGE_ATTRs
 
                                   ┌──────────────┐
                                   │   SQS AUTH   │
@@ -1071,11 +1152,13 @@ SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery s
 
 AWS::SNS::Subscription            #Includes RESPROPs: SubscriptionRoleArn
 
+CSUB_OPTS.subscriptionRoleArn     #SUB_ATTRS.SubscriptionRoleArn
+
                                   ┌───────────┐
                                   │   EMAIL   │
                                   └───────────┘
 
-SUB.Protocol                      #'email[-json]'. Send as email
+SUB.Protocol                      #'email[-json]'. Send as email (SMTP)
 SUB.Endpoint                      #'EMAIL_ADDRESS'
 
 TOPIC_ATTRS.DisplayName           #'From' email field
