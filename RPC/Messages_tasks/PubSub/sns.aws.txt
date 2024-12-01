@@ -911,8 +911,8 @@ TOPIC_ATTRS.KmsMasterKeyId        #KMS_ID (def: none). "SSE". Encrypts MESSAGE_B
                                   │   ENCRYPTION AUTH   │
                                   └─────────────────────┘
 
-PACTION
- kms:Decrypt|GenerateDataKey*     #Must be allowed if SSE
+PACTION                           #Must be allowed if SSE, on publishers and SUBs
+ kms:Decrypt|GenerateDataKey*     #COND_KEY SourceArn|SourceAccount
 
                                   ┌────────────────────┐
                                   │   ENCRYPTION IAC   │
@@ -939,6 +939,7 @@ TOPIC_ATTRS                       #ROLE_ARN. Sends successful NOTIFICATIONs to C
  .PROTOCOLSuccessFeedbackRoleArn  #PROTOCOL is 'HTTP', 'Lambda', 'SQS', 'Firehose' or 'Application'
                                   #Not for email
                                   #TOPIC is sent as a logging TELEMETRY_ENTITY
+                                  #Must be assumable by Principal.Service 'sns.amazonaws.com'
 TOPIC_ATTRS
  .PROTOCOLFailureFeedbackRoleArn  #Same for failed NOTIFICATIONs
 TOPIC_ATTRS                       #0-100. Percentage of successful NOTIFICATIONs to log
@@ -948,7 +949,8 @@ APP_PLATFORM_ATTRS.*              #Same as TOPIC_ATTRS.Application*
 SMS_ATTRS.DeliveryStatusIAMRole
 |DeliveryStatusSuccessSamplingRate#Same for SMS
 
-sns/REGION/ACCOUNT_ID/TOPIC       #'LOG_GROUP'
+sns/REGION/ACCOUNT_ID/TOPIC       #'LOG_GROUP' on success|failure
+ [/Failure]                       #With SMS direct push, TOPIC is 'DirectPublishToPhoneNumber'
 
 LPAYLOAD                          #JSON LMESSAGE used in logs
 LPAYLOAD.status                   #'SUCCESS|FAILURE'
@@ -968,7 +970,9 @@ LRES.token                        #STR???
 PACTION iam:PassRole              #Must be allowed on current PRINCIPAL
 
 PACTION logs:CreateLogGroup
- |CreateLogStream|PutLogEvents    #Must be allowed on success|failure ROLE
+ |CreateLogStream|PutLogEvents
+ |PutMetricFilter
+ |PutRetentionPolicy              #Must be allowed on success|failure ROLE
 
 service-role/AmazonSNSRole        #AWS managed POLICY that allows PACTIONs:
                                   #  - logs:CreateLogGroup|PutMetricFilter|PutRetentionPolicy on any LOG_GROUP
@@ -1310,7 +1314,7 @@ new SqsSubscription               #CCSUB
  (ICQUEUE[, CSUB_OPTS])           #Automatically adds relevant permissions using CQUEUE_MPOLICY
 FFLAG @aws-cdk
  /aws-sns-subscriptions           #BOOL (recommended, def: false)
- :restrictSqsDescryption          #When allowing kms:* (due to SSE-KMS), use COND_KEY aws:SourceArn TOPIC_ARN
+ :restrictSqsDescryption          #When allowing kms:... (due to SSE-KMS), use COND_KEY aws:SourceArn TOPIC_ARN
 
                                   ┌─────────────┐
                                   │   SQS SAM   │
@@ -1412,7 +1416,7 @@ NOTIFICATION.Replayed             #true when replayed
                                   └─────────────────────┘
 
 PACTION
- kms:Decrypt|GenerateDataKey*     #Must be allowed to Principal.Service 'sns.amazonaws.com' if SSE
+ kms:Decrypt|GenerateDataKey*     #Must be allowed to Principal.Service 'sns.amazonaws.com' if SSE-KMS
 
                                   ┌────────────────────┐
                                   │   SQS REPLAY IAC   │
@@ -1587,6 +1591,13 @@ AWS::SNS::Topic                   #Includes RESPROPs: DisplayName
 
 CTOPIC_OPTS.displayName           #TOPIC_ATTRS.*
 
+                                  ┌─────────────────────────┐
+                                  │   SMS MESSAGE LOGGING   │
+                                  └─────────────────────────┘
+
+SMS_USAGE[6]                      #NUM. Part number
+SMS_USAGE[7]                      #NUM. Total number of parts
+
                                   ┌─────────────────────┐
                                   │   SMS ORIGINATION   │
                                   └─────────────────────┘
@@ -1648,11 +1659,23 @@ SUB.Endpoint                      #'PHONE_NUMBER'
 
 MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
                                   #"Direct push": send a MESSAGE without using a TOPIC
-                                  #Pros: cheaper, and faster
-                                  #Con: cannot use any TOPIC|SUB-related features (FILTERS, monitoring, throttling, retries, etc.)
+                                  #Pros:
+                                  #  - cheaper
+                                  #  - faster
+                                  #Con:
+                                  #  - single PHONE_NUMBER per MESSAGE
+                                  #  - cannot use any TOPIC|SUB-related features (FILTERS, monitoring, throttling, retries, etc.)
 
 SMS_UI_SETTINGS.ReceiverRegions   #'REGION'_ARR
 SMS_UI_SETTINGS.ReceiverCountries #'COUNTRY'_ARR
+
+                                  ┌──────────────────────────┐
+                                  │   SMS RECEIVER LOGGING   │
+                                  └──────────────────────────┘
+
+LRES.mcc                          #Country code
+LRES.mnc                          #Mobile network code, i.e. phone carrier code
+LRES.phoneCarrier                 #STR
 
                                   ┌───────────────┐
                                   │   SMS ALLOW   │
@@ -1663,6 +1686,8 @@ SMS_UI_SETTINGS.OptInMethod       #How receivers opt in to SMSs???
 SMS_BLOCK.phoneNumber             #'PHONE_NUMBER'
 SMS_BLOCK.isOptedOut              #BOOL. Whether PHONE_NUMBER blocked our number
                                   #Can be set from false to true, but only once per PHONE_NUMER per 30 days
+
+BEST PRACTICES ==>                #Unsolicited MESSAGEs are now allowed
 
                                   ┌────────────────────┐
                                   │   SMS ALLOW AUTH   │
@@ -1755,10 +1780,8 @@ SMS_UI_SETTINGS.DefaultSMSType    #'Promotional', 'Transactional' or 'OneTimePas
 
 SMS_ATTRS|SMS_UI_SETTINGS         #Max NUM of USD to spend per month
  .MonthlySpendLimit               #Make MESSAGEs fail if more
-                                  #Def: undocumented??? Max 1 USD (soft) per ACCOUNT???
-
-SMESSAGE.MaxPrice                 #Max NUM of USD to spend on each NOTIFICATION (sent by that MESSAGE)
-                                  #Make MESSAGE fail if more
+                                  #Def: 1 USD (soft), i.e. usually need to increase if free tier not enough
+SMESSAGE.MaxPrice                 #Same but for each SMS sent by that MESSAGE
 
                                   ┌─────────────────────┐
                                   │   SMS CHARGE AUTH   │
@@ -1781,6 +1804,16 @@ AWS/SNS/SMSMonthToDateSpentUSD    #NUM of USD charged for sending SMS since star
 ICTOPIC
  .metricSMSMonthToDateSpentUSD
  ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Maximum'
+
+                                  ┌────────────────────────┐
+                                  │   SMS CHARGE LOGGING   │
+                                  └────────────────────────┘
+
+LRES.smsType                      #SMESSAGE.SMSType
+LRES.priceInUSD                   #NUM. SMS cost
+
+SMS_USAGE[3]                      #SMS_ATTRS.DefaultSMSType
+SMS_USAGE[5]                      #NUM. Price in USD
 
                                   ┌─────────────────┐
                                   │   SMS METRICS   │
@@ -1807,17 +1840,15 @@ ICTOPIC.metricSMSSuccessRate
                                   │   SMS LOGGING   │
                                   └─────────────────┘
 
+LRES.dwellTimeMsUntilDeviceAck    #NUM (in ms). Duration between TOPIC and phone carrier accepting SMS
+
 SMS_ATTRS.UsageReportS3Bucket     #'BUCKET'. Logs successful NOTIFICATIONs as an OBJECT
                                   #Once per day
                                   #Is a CSV file with NOTIFICATION rows and SMS_USAGE columns
 SMS_USAGE[0]                      #NOTIFICATION.Timestamp
 SMS_USAGE[1]                      #NOTIFICATION.MessageId
 SMS_USAGE[2]                      #'PHONE_NUMBER'
-SMS_USAGE[3]                      #SMS_ATTRS.DefaultSMSType
 SMS_USAGE[4]                      #STR. Delivery status???
-SMS_USAGE[5]                      #NUM. Price in USD
-SMS_USAGE[6]                      #NUM. Part number
-SMS_USAGE[7]                      #NUM. Total number of parts
 
                                   ┌──────────────────────┐
                                   │   SMS LOGGING AUTH   │
