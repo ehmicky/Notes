@@ -6,8 +6,6 @@
 VERSION ==>                       #2024-09-24
 
 TODO:
-  - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
-  - check sns_backup.txt in Desktop
   - Lambda:
      - https://github.com/aws/aws-cdk/blob/8ce02838ba5033a6b35123a34e444c4f35350975/packages/aws-cdk-lib/aws-lambda-event-sources/lib/sns.ts
         - https://github.com/aws/aws-cdk/tree/8ce02838ba5033a6b35123a34e444c4f35350975/packages/aws-cdk-lib/aws-lambda-event-sources#sns
@@ -27,6 +25,11 @@ TODO:
   - https://github.com/Admiral-Piett/goaws
      - see current doc of `goaws`, moving the SNS-specific part at the bottom
      - see https://github.com/Admiral-Piett/goaws README for SNS
+  - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
+  - https://aws.amazon.com/sns/faqs
+  - check sns_backup.txt in Desktop
+  - https://aws.amazon.com/sns/pricing
+  - add summary
 
                                   ┌─────────┐
                                   │   API   │
@@ -51,10 +54,34 @@ PAGINATION ==>                    #Uses REQ|RES.NextToken
                                   #No pagination: ListTagsForResource()
                                   #Others: page size always 100
 
-THROTTLING ==>                    #100/s: Subscribe()
+MESSAGE THROTTLING ==>            #MESSAGEs per seconds, not API calls, i.e. regardless of Publish[Batch]()
+                                  #Is:
+                                  #  - same REGION: 30000|9000|1500|300 (REGION-specific, soft) and 20MB/s
+                                  #  - cross-REGIONs: 1000 (soft) and 6MB/s
+                                  #  - SMS: 20 (soft)
+                                  #  - email: 10
+
+THROTTLING ==>                    #3000|900|150|30/s (REGION-specific, soft): *Topic*(), ConfirmSubscription(),
+                                  # *SubscriptionAttributes(), GetDataProtectionPolicy(), *Platform|Endpoint*()
+                                  #100/s: [Un]Subscribe()
+                                  #50/s: CheckIfPhoneNumberIsOptedOut()
                                   #30/s: ListTopics(), ListSubscriptions[ByTopic](), ListEndpointsByPlatformApplication()
+                                  #20/s: GetSMSAttributes(), OptInPhoneNumber()
                                   #15/s: ListPlatformApplications()
-                                  #10/s: *Tag*()
+                                  #10/s: *Permission*(), *Tag*(), ListPhoneNumbersOptedOut(), GetSMSSandboxAccountStatus()
+                                  #1/s (soft): PutDataProtectionPolicy()
+                                  #1/s: *SMSSandboxPhoneNumber*(), SetSMSAttributes(), ListOriginationNumbers()
+
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonSNSFullAccess               #AWS managed POLICY. Allows all 'sns:*' PACTIONs
+                                  #Also allows sms-voice:PACTION (SMS|Voice with AWS End User Messaging):
+                                  #  - DestinationNumber*, SendTextMessage, SetTextMessageSpendLimitOverride, DescribeAccountAttributes,
+                                  #    DescribeSpendLimits, DescribePhoneNumbers, DescribeOptedOutNumbers, DeleteOptedOutNumber
+                                  #  - COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+AmazonSNSReadOnlyAccess           #Same but readonly
 
                                   ┌───────────┐
                                   │   TOPIC   │
@@ -62,7 +89,7 @@ THROTTLING ==>                    #100/s: Subscribe()
 
 TOPIC                             #Forwards MESSAGEs to SUBSCRIPTIONs
                                   #Creating|deleting is idempotent
-                                  #Max 1e5 non-FIFO TOPICs, 1e3 FIFO TOPICs
+                                  #Max 1e5 (soft) non-FIFO TOPICs, 1e3 (soft) FIFO TOPICs
 TOPIC.TopicArn                    #'TOPIC_ARN'. 'arn:aws:sns:REGION:ACCOUNT_ID:TOPIC'
 TOPIC.Name                        #'TOPIC'
                                   #Max 256 chars, [:alnum:]-_
@@ -104,6 +131,13 @@ DeleteTopic()                     #Req: TOPIC
 
 AWS::SNS::Topic                   #RESPROPs: TopicName, TracingConfig
                                   #RESATTRs: TopicArn, TopicName
+
+                                  ┌───────────────────┐
+                                  │   TOPIC METRICS   │
+                                  └───────────────────┘
+
+DVAR TopicName                    #'TOPIC', sent with all METRICs except AWS/SNS/SMS*
+                                  #QUEUE is also sent as a METRIC_ENTITY
 
                                   ┌────────────────┐
                                   │   TOPIC TAGS   │
@@ -192,6 +226,7 @@ AWS::SNS::Topic                   #Includes RESPROPs: ArchivePolicy, ReplayPolic
                                   └──────────────────┘
 
 SUB                               #Forwards MESSAGEs to a PROTOCOL-specific destination
+                                  #Max 12.5e6 (soft) per non-FIFO TOPIC, 100 (soft) per FIFO TOPIC
 SUB.SubscriptionArn               #'SUBSCRIPTION_ARN'. 'TOPIC_ARN:SUBSCRIPTION_MID'
 SUB.TopicArn                      #'TOPIC_ARN'
 SUB.Attributes                    #SUB_ATTRS
@@ -200,6 +235,7 @@ SUB.Protocol                      #'PROTOCOL'. All valid values are documented b
 SUB.Endpoint                      #Destination. PROTOCOL-specific, defined below
 
 SUB_ATTRS.FilterPolicy            #'FILTER_JSON'. Filter which MESSAGEs to receive???
+                                  #Max 200 per TOPIC, 1e4 per ACCOUNT
 SUB_ATTRS.FilterPolicyScope       #Whether FILTER is applied on 'MessageAttributes' (def) or 'MessageBody'
 
 SUB_ATTRS.RedrivePolicy           #'REDRIVE_POLICY_JSON'. Sends failed MESSAGEs to SQS DLQ???
@@ -262,6 +298,7 @@ SUB_CONFIRM                       #Confirms SUBSCRIPTION creation
                                   #Required if both:
                                   #  - HTTP|email
                                   #  - TOPIC and endpoint are in different ACCOUNTs
+                                  #Max 5e3 (soft) pending SUBs per ACCOUNT
 SUB_CONFIRM.TopicArn              #'TOPIC_ARN'
 
 SUB_CONFIRM.Token                 #STR. Authentication token. How to get???
@@ -293,6 +330,7 @@ ConfirmSubscription()             #Req: SUB_CONFIRM
                                   └─────────────┘
 
 MESSAGE                           #Max 256KB
+                                  #Max header 16KB???
 
 MESSAGE_RES.MessageId             #'MESSAGE_MID'
 MESSAGE.TopicArn                  #'TOPIC_ARN'
@@ -324,6 +362,7 @@ Publish()                         #Req: MESSAGE
                                   └───────────┘
 
 BATCH                             #Multiple MESSAGEs in a single API call
+                                  #Max 10 entries
                                   #Max 256KB
 
 BATCH.TopicArn                    #'TOPIC_ARN'
@@ -399,6 +438,10 @@ SMS_ATTRS
 
 PACTION iam:PassRole              #Required with TOPIC_ATTRS.*FeedbackRoleArn???
 
+service-role/AmazonSNSRole        #AWS managed POLICY that allows PACTIONs:
+                                  #  - logs:CreateLogGroup|PutMetricFilter|PutRetentionPolicy on any LOG_GROUP
+                                  #  - logs:CreateLogStream|PutLogEvents on any LOG_STREAM
+
                                   ┌─────────────────┐
                                   │   LOGGING IAC   │
                                   └─────────────────┘
@@ -453,7 +496,7 @@ RemovePermission()                #Req: PERMISSION
                                   └────────────────┘
 
 AWS::SNS::TopicInlinePolicy       #RESPROPs: PolicyDocument POLICY_DOC_OBJ, TopicArn 'TOPIC_ARN'
-                                  #Is QUEUE_ATTRS.Policy, i.e. resource-level
+                                  #Is TOPIC_ATTRS.Policy, i.e. resource-level
                                   #With Cloud Control, cannot list
 
 AWS::SNS::TopicPolicy             #RESPROPs: PolicyDocument POLICY_DOC_OBJ, Topics 'TOPIC_ARN'_ARR
@@ -549,6 +592,7 @@ SUB_ATTRS.RawMessageDelivery      #Like above
                                   └─────────────┘
 
 SUB.Protocol                      #'firehose'. Send to Kinesis Firehose delivery stream
+                                  #Max 5 per DELIVERY_STREAM's ACCOUNT + TOPIC
 SUB.Endpoint                      #'DELIVERY_STREAM_ARN'
 
 SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery stream
@@ -611,7 +655,7 @@ SMS_ATTRS.DefaultSMSType          #Either:
 SMS_UI_SETTINGS.DefaultSMSType    #'Promotional', 'Transactional' or 'OneTimePassword'
 
 SMS_ATTRS|SMS_UI_SETTINGS         #Max NUM of USD to spend
- .MonthlySpendLimit               #Def: undocumented???
+ .MonthlySpendLimit               #Def: undocumented??? Max 1 USD (soft) per ACCOUNT???
 
 SMS_ATTRS.UsageReportS3Bucket     #'BUCKET'. Logs successful MESSAGEs as an OBJECT
                                   #Once per day
