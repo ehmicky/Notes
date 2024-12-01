@@ -349,7 +349,9 @@ Unsubscribe()                     #Req: SUB
 
 AWS::SNS::Subscription            #RESPROPs:
                                   #  - TopicArn, Protocol, Endpoint
-                                  #  - Region 'REGION' (def: current)
+                                  #  - Region:
+                                  #     - 'REGION' of the TOPIC
+                                  #     - def: SUB's REGION, i.e. only needed if cross-REGION
                                   #RESATTRs: Arn
 
 AWS::SNS::Topic                   #Includes RESPROPs: Subscription OBJ_ARR: Protocol, Endpoint
@@ -359,6 +361,8 @@ new Subscription
  (...CARGS, CSUB_OPTS)            #CSUB
 ICTOPIC.addSubscription(CCSUB)
  ->CSUB                           #
+new PROTOCOLSubscription          #CCSUB. Each one is documented below
+ (CSUB_OPTS.endpoint[, CSUB_OPTS])#Automatically sets CSUB_OPTS.topic|protocol|region
 
 CSUB_OPTS.topic                   #ICTOPIC. SUB.TopicArn
 CSUB_OPTS.protocol                #SUB.Protocol
@@ -467,11 +471,35 @@ DATATYPE ARRAY ==>                #If DataType '*.Array':
 
 AWS::SNS::Subscription            #Includes RESPROPs: FilterPolicy OBJ, FilterDeliveryScope
 
-CSUB_OPTS.filterPolicy.PROP       #CFILTER
-new SubscriptionFilter(???)
-
+CSUB_OPTS.filterPolicy.PROP       #CFILTER, when SUB_ATTRS.FilterPolicyScope 'MessageAttributes'
 CSUB_OPTS
- .filterPolicyWithMessageBody.PROP#CFILTER_OR_POLICY
+ .filterPolicyWithMessageBody
+ .PROP                            #CNESTED_FILTER, when SUB_ATTRS.FilterPolicyScope 'MessageBody'
+
+FilterOrPolicy.filter
+ (CFILTER)->CNESTED_FILTER        #FILTERS.PROP
+FilterOrPolicy.policy
+ ({PROP: CNESTED_FILTER, ...})
+ ->CNESTED_FILTER2                #FILTERS.PROP.PROP...
+
+new SubscriptionFilter(ARR)       #CFILTER. FILTERS.PROP
+                                  #Passes an ARR of VAL or FILTER
+
+SubscriptionFilter.stringFilter
+ (OPTS)->CFILTER                  #
+OPTS.allowlist                    #ARR of VALs
+OPTS.denylist                     #ARR. {anything-but: ARR}
+OPTS.matchesPrefixes|Suffixes     #STR_ARR. Multiple {prefix|suffix: STR}
+
+SubscriptionFilter.numericFilter
+ (OPTS)->CFILTER                  #
+OPTS.less|greaterThan[OrEqualTo]  #NUM. {numeric: ['OP', NUM]}
+OPTS.between.start|stop           #NUM. {numeric: ['>=', NUM, '<=', NUM2]}
+OPTS.betweenStrict.start|stop     #NUM. {numeric: ['>', NUM, '<', NUM2]}
+OPTS.allowlist                    #ARR. Multiple {numeric: ['=', VAL]}
+
+SubscriptionFilter.existsFilter()
+ ->CFILTER                        #{exists: true}
 
                                   ┌────────────────────┐
                                   │   FILTER METRICS   │
@@ -556,14 +584,13 @@ AWS/SNS/                          #NUM of MESSAGEs successfully sent from SUBs
                                   │   RETRY   │
                                   └───────────┘
 
-TOPIC_ATTRS|SUB_ATTRS
- .DeliveryPolicy                  #'DELIVERY_POLICY_JSON'
+TOPIC_ATTRS|SUB_ATTRS             #'DELIVERY_POLICY_JSON'
+ .DeliveryPolicy                  #Can only be set with HTTP: other PROTOCOLs always use the default value
 TOPIC_ATTRS|SUB_ATTRS
  .EffectiveDeliveryPolicy         #Same but also shows default values
 
 DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send MESSAGE from TOPIC to SUB
                                   #MESSAGE is considered failed once no more retries
-                                  #Can only be customized with HTTP: other PROTOCOLs always use the default value
 RETRY_POLICY.minDelayTarget       #NUM (in secs, min 1). Retry start delay
                                   #Def 20s with HTTP, 10s with email|SMS|APP, 1s else
 RETRY_POLICY.maxDelayTarget       #NUM (in secs, min minDelayTarget, max 1h). Retry end delay
@@ -613,7 +640,9 @@ AWS/SNS/                          #NUM of MESSAGEs failed to be sent from SUBs
                                   └───────────────────────┘
 
 SUB_ATTRS.RedrivePolicy           #'REDRIVE_POLICY_JSON'. Sends failed MESSAGEs to SQS DLQ
+                                  #Not with SMS???
 REDRIVE_POLICY.deadLetterTargetArn#'QUEUE_ARN'
+                                  #Cannot use SSE-KMS
 
                                   ┌────────────────────────────┐
                                   │   DEAD-LETTER QUEUE AUTH   │
@@ -638,9 +667,9 @@ AWS/SNS/NumberOfNotifications
                                   │   DEAD-LETTER QUEUE IAC   │
                                   └───────────────────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: RedrivePolicy REDRIVE_POLICY_OBJ
+AWS::SNS::Subscription            #Includes RESPROPs: RedrivePolicy: DeadLetterTargetArn
 
-CSUB[_OPTS].deadLetterQueue       #ICQUEUE
+CSUB[_OPTS].deadLetterQueue       #ICQUEUE. SUB_ATTRS.RedrivePolicy
                                   #Automatically adds relevant permissions using CQUEUE_MPOLICY
 
                                   ┌────────────────────────────┐
@@ -680,6 +709,7 @@ ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
 SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). Use MESSAGE_BODY as LMESSAGE
                                   #As opposed to setting LMESSAGE.* including LMESSAGE.Message 'MESSAGE_BODY'
                                   #Only for HTTP, SQS, Firehose
+                                  #Also for email, but using 'PROTOCOL' 'email' (true) vs 'email-json' (false)
 
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
@@ -1058,7 +1088,7 @@ AWS/SNS/MessagesWith[No]Findings  #NUM of MESSAGEs matching MASK_OP.Audit.[No]Fi
                                   └──────────┘
 
 SUB.Protocol                      #'http[s]'. Send using HTTP request, with POST
-SUB.Endpoint                      #'URL' to send to
+SUB.Endpoint                      #'http[s]://...' to send to
 
 DELIVERY_POLICY                   #Content-Type [C] of MESSAGEs
  .requestPolicy.headerContentType #'MIME' among 'text/plain' (def), 'application/json', 'application/xml'
@@ -1072,6 +1102,21 @@ x-amz-sns-rawdelivery: true [C]   #Set if SUB_ATTRS.RawMessageDelivery true (see
                                   └──────────────┘
 
 AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: RequestPolicy
+
+new UrlSubscription               #CCSUB
+ ('URL'[, CSUB_OPTS])             #Def CSUB_OPTS.protocol: uses 'URL' scheme
+new SqsSubscription               #CCSUB
+ (ICQUEUE[, CSUB_OPTS])           #Automatically adds relevant permissions using CQUEUE_MPOLICY
+FFLAG @aws-cdk
+ /aws-sns-subscriptions           #BOOL (recommended, def: false)
+ :restrictSqsDescryption          #When allowing kms:* (due to SSE-KMS), use COND_KEY aws:SourceArn TOPIC_ARN
+new EmailSubscription
+ ('EMAIL_ADDRESS'[, CSUB_OPTS])   #CCSUB
+CSUB_OPTS.json                    #BOOL (def: false). Whether 'PROTOCOL' is 'email' or 'email-json'
+new SmsSubscription
+ ('PHONE_NUMBER'[, CSUB_OPTS])    #CCSUB
+
+Def CSUB_OPTS.region: uses STACK|TOPIC's REGION
 
 CDELIVERY_POLICY.requestPolicy    #DELIVERY_POLICY.*
 
@@ -1141,6 +1186,7 @@ LMESSAGE.SigningCertURL           #URL to encryption PEM
 
 SUB.Protocol                      #'sqs'. Send to a SQS QUEUE
 SUB.Endpoint                      #'QUEUE_ARN'
+                                  #Cannot use SSE-KMS
 
 MESSAGE_BODY                      #LMESSAGE (see above)
 
@@ -1154,6 +1200,7 @@ PACTION sqs:SendMessage           #Must be allowed:
                                   #  - Resource QUEUE
                                   #  - Principal.Service 'sns.amazonaws.com'
                                   #  - COND_KEY aws:SourceArn TOPIC_ARN
+                                  #Also kms:Decrypt|GenerateDataKey, if SSE-KMS
 
                                   ┌─────────────┐
                                   │   SQS CLI   │
@@ -1161,6 +1208,13 @@ PACTION sqs:SendMessage           #Must be allowed:
 
 sqs_grep                          #Can be used to copy SQS MESSAGEs back to SNS
                                   #See its doc
+
+                                  ┌─────────────┐
+                                  │   SQS IAC   │
+                                  └─────────────┘
+
+AWS::SNS::Subscription            #Must DependsOn QUEUE
+                                  #If TOPIC is in a different STACK, QUEUE must also DependsOn TOPIC
 
                                   ┌─────────────┐
                                   │   SQS SAM   │
