@@ -7,11 +7,10 @@ VERSION ==>                       #2024-09-24
 
 TODO:
   - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
+     - stopped at: Amazon SNS event sources and destinations
      - already done:
-        - Message filtering
-        - Message data protection
-        - Message delivery
         - Security > Logging and monitoring
+  - https://docs.aws.amazon.com/sns/latest/dg/sns-fork-pipeline-as-subscriber.html
   - https://aws.amazon.com/sns/faqs
   - https://aws.amazon.com/sns/pricing
   - search projects on GitHub
@@ -240,7 +239,7 @@ Subscribe()                       #Req: SUB
                                   #  - only SubscriptionArn
 SetSubscriptionAttributes()       #Req: SUB
                                   #  - only SubscriptionArn, Attributes -> AttributeName 'SUB_ATTR', AttributeValue STR
-                                  #  - Attributes: no *Confirmation*, EffectiveDeliveryPolicy, Replay*
+                                  #  - Attributes: no *Confirmation*, EffectiveDeliveryPolicy
                                   #Res: empty
 ListSubscriptions()               #Req: empty
                                   #Res: Subscriptions SUB_ARR
@@ -252,7 +251,7 @@ ListSubscriptionsByTopic()        #Req: SUB
 GetSubscriptionAttributes()       #Req: SUB
                                   #  - only SubscriptionArn
                                   #Res: SUB
-                                  #  - only Attributes: no Replay*
+                                  #  - only Attributes
                                   #  - only Owner|*Arn -> Attributes.Owner|*Arn
 Unsubscribe()                     #Req: SUB
                                   #  - only SubscriptionArn
@@ -539,6 +538,7 @@ DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send 
                                   #NOTIFICATION is considered failed once no more retries
                                   #Retries "server-side errors":
                                   #  - could not reach endpoint
+                                  #     - e.g. HTTP server down, or AWS outage
                                   #  - 5** response
                                   #Does not retry "client-side errors":
                                   #  - invalid API call
@@ -1364,16 +1364,43 @@ CTOPIC[_OPTS]
                                   └────────────────┘
 
 TOPIC_ATTRS.ArchivePolicy         #NUM (in days, min|def 0, max 1y).
- .MessageRetentionPeriod          #Stores MESSAGEs, in order to replay them
+ .MessageRetentionPeriod          #Stores MESSAGEs ("archive"), in order to re-send them
+                                  #Keep MESSAGEs as is, including Timestamp, MessageId, etc.
+                                  #Regardless of SUBs, i.e. of FILTERS, NOTIFICATIONs failures, etc.
+                                  #Possible goals:
+                                  #  - replication
+                                  #  - retry failed NOTIFICATIONs, similar to DLQ
+                                  #If set, cannot delete TOPIC
                                   #Only with FIFO
 TOPIC_ATTRS.BeginningArchiveTime  #DATE_NUM. Earliest time to replay from, based on MessageRetentionPeriod
 
-SUB_ATTRS.ReplayPolicy            #'REPLAY_JSON'. Re-send MESSAGEs stored in TOPIC
+SUB_ATTRS.ReplayPolicy            #'REPLAY_JSON'. Re-sends MESSAGEs stored in TOPIC
+                                  #Setting it triggers the re-sending
+                                  #When re-sending done, still set
+                                  #Since only with FIFO, pauses while re-sending
+                                  #  - i.e. new MESSAGEs are archived and not sent to SUBs
+                                  #Every SUB settings applies to the re-sent MESSAGEs, including FILTERS
 REPLAY.PointType                  #Always 'Timestamp'
 REPLAY.StartingPoint              #'DATE'
-REPLAY.EndingPoint                #'DATE' (def: now)
+REPLAY.EndingPoint                #'DATE'. If not set, once done:
+                                  #  - any MESSAGE archive while re-sending was happening are replayed too
+                                  #  - then unpauses
+                                  #If set, once done:
+                                  #  - keeps it paused
+                                  #  - can unpause can setting ReplayPolicy again but with:
+                                  #     - StartingPoint with same value as previous EndpointPoint
+                                  #     - no EndingPoint
 
 SUB_ATTRS.ReplayStatus            #'Pending', 'In progress', 'Completed' or 'Failed'
+
+NOTIFICATION.Replayed             #true when replayed
+
+                                  ┌─────────────────────┐
+                                  │   SQS REPLAY AUTH   │
+                                  └─────────────────────┘
+
+PACTION
+ kms:Decrypt|GenerateDataKey*     #Must be allowed to Principal.Service 'sns.amazonaws.com' if SSE
 
                                   ┌────────────────────┐
                                   │   SQS REPLAY IAC   │
@@ -1383,6 +1410,26 @@ AWS::SNS::Topic                   #Includes RESPROPs: ArchivePolicy, ReplayPolic
 
 CTOPIC_OPTS
  .messageRetentionPeriodInDays    #TOPIC_ATTRS.ArchivePolicy.MessageRetentionPeriod
+
+                                  ┌────────────────────────┐
+                                  │   SQS REPLAY METRICS   │
+                                  └────────────────────────┘
+
+AWS/SNS/ApproximateNumberOf
+ MessagesArchived                 #NUM of archived MESSAGEs
+
+AWS/SNS/ApproximateNumberOf
+ BytesArchived                    #Size (in bytes) of archived MESSAGEs
+
+AWS/SNS/NumberOf
+ MessagesArchiveProcessing
+AWS/SNS/NumberOf
+ BytesArchiveProcessing           #Same as both above but using StorageResolution 'high' instead of 'regular'
+
+AWS/SNS/NumberOf
+ ReplayedNotificationsDelivered   #NUM of MESSAGEs successfully replayed
+AWS/SNS/NumberOf
+ ReplayedNotificationsFailed      #NUM of MESSAGEs that failed to replay
 
                                   ┌─────────────┐
                                   │   KINESIS   │
