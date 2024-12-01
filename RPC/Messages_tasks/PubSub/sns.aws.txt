@@ -71,12 +71,6 @@ TOPIC.Attributes                  #TOPIC_ATTRS
 TOPIC_ATTRS.TracingConfig         #'PassThrough' or 'Active'. X-Ray settings
                                   #Not on FIFO
 
-                                  ┌────────────────┐
-                                  │   TOPIC AUTH   │
-                                  └────────────────┘
-
-PACTION iam:PassRole              #Required with TOPIC_ATTRS.*FeedbackRoleArn???
-
                                   ┌───────────────┐
                                   │   TOPIC API   │
                                   └───────────────┘
@@ -131,13 +125,14 @@ UntagResource()                   #Req: TOPIC_TAGS
 
 TOPIC_ATTRS.FifoTopic             #BOOL (def: false). Whether is FIFO TOPIC
                                   #'TOPIC' must end with '.fifo'
+                                  #Everything in this section is only for FIFO
 
 ORDER ==>                         #Ensures that receiving order is same as sending order
 
 MESSAGE.MessageGroupId            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
                                   #I.e. MESSAGE_GROUPs are interleaved
                                   #High NUM of MESSAGE_GROUPs has better performance
-                                  #Only with FIFO. Required
+                                  #Required
                                   #Max 128 chars, [:graph:]
                                   #No limits on NUM of MESSAGE_GROUPs
 MESSAGE_RES.SequenceNumber        #'NUM'. Increases monotonically (but not consecutively) per MESSAGE within a given MESSAGE_GROUP
@@ -147,17 +142,37 @@ MESSAGE.MessageDeduplicationId    #'MESSAGE_DID'. If 2 Publish() with the same M
                                   #  - within 5m
                                   #  - then only the first successful one is used
                                   #I.e. avoid double sending
-                                  #Only with FIFO. Required
+                                  #Required
                                   #Max 128 chars, [:graph:]
 TOPIC_ATTRS
  .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_DID default to SHA-256 of 'MESSAGE_BODY'
 
-TOPIC_ATTRS.ArchivePolicy         #STR. Retention period???
-                                  #Max 1y
-TOPIC_ATTRS.BeginningArchiveTime  #DATE_NUM. Earliest time to replay from, based on retention???
+                                  ┌──────────────┐
+                                  │   FIFO IAC   │
+                                  └──────────────┘
 
-SUB_ATTRS.ReplayPolicy            #STR. Replay MESSAGEs stored in TOPIC???
+AWS::SNS::Topic                   #Includes RESPROPs: FifoTopic, ContentBasedDeduplication
+
+                                  ┌─────────────────┐
+                                  │   FIFO REPLAY   │
+                                  └─────────────────┘
+
+TOPIC_ATTRS.ArchivePolicy         #NUM (in days, min|def 0, max 1y).
+ .MessageRetentionPeriod          #Stores MESSAGEs, in order to replay them
+TOPIC_ATTRS.BeginningArchiveTime  #DATE_NUM. Earliest time to replay from, based on MessageRetentionPeriod
+
+SUB_ATTRS.ReplayPolicy            #'REPLAY_JSON'. Re-send MESSAGEs stored in TOPIC
+REPLAY.PointType                  #Always 'Timestamp'
+REPLAY.StartingPoint              #'DATE'
+REPLAY.EndingPoint                #'DATE' (def: now)
+
 SUB_ATTRS.ReplayStatus            #'Pending', 'In progress', 'Completed' or 'Failed'
+
+                                  ┌─────────────────────┐
+                                  │   FIFO REPLAY IAC   │
+                                  └─────────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: ArchivePolicy
 
                                   ┌──────────────────┐
                                   │   SUBSCRIPTION   │
@@ -326,6 +341,47 @@ TOPIC_ATTRS.SignatureVersion      #Algorithm used for the encryption signature. 
                                   #  - 1 (def): RSA with SHA1
                                   #  - 2 (recommended): RSA with SHA256
 
+                                  ┌────────────────────┐
+                                  │   ENCRYPTION IAC   │
+                                  └────────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: KmsMasterKeyId, SignatureVersion
+
+                                  ┌─────────────┐
+                                  │   LOGGING   │
+                                  └─────────────┘
+
+TOPIC_ATTRS                       #ROLE_ARN used to send to CloudWatch Logs, logging successful MESSAGEs
+ .PROTOCOLSuccessFeedbackRoleArn  #PROTOCOL is HTTP, Lambda, SQS, Firehose or Application
+                                  #Not for email
+TOPIC_ATTRS
+ .PROTOCOLFailureFeedbackRoleArn  #Same for failed MESSAGEs
+TOPIC_ATTRS                       #0-100. Percentage of successful MESSAGEs to log
+.PROTOCOLSuccessFeedbackSampleRate#Failed MESSAGEs are always logged
+
+APP_PLATFORM_ATTRS
+ .SuccessFeedbackRoleArn
+ |SuccessFeedbackSampleRate
+ |FailureFeedbackRoleArn          #Same as TOPIC_ATTRS.Application*???
+
+SMS_ATTRS.DeliveryStatusIAMRole
+SMS_ATTRS
+.DeliveryStatusSuccessSamplingRate#Same for SMS???
+
+                                  ┌──────────────────┐
+                                  │   LOGGING AUTH   │
+                                  └──────────────────┘
+
+PACTION iam:PassRole              #Required with TOPIC_ATTRS.*FeedbackRoleArn???
+
+                                  ┌─────────────────┐
+                                  │   LOGGING IAC   │
+                                  └─────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: DeliveryStatusLogging OBJ_ARR:
+                                  #  - Protocol 'PROTOCOL'
+                                  #  - SuccessFeedbackRoleArn, FailureFeedbackRoleArn, SuccessFeedbackSampleRate
+
                                   ┌────────────┐
                                   │   POLICY   │
                                   └────────────┘
@@ -397,6 +453,12 @@ GetDataProtectionPolicy()         #Req: TOPIC
                                   #Res: TOPIC
                                   #  - only DataProtectionPolicy
 
+                                  ┌─────────────────────────┐
+                                  │   DATA PROTECTION IAC   │
+                                  └─────────────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: DataProtectionPolicy DPOLICY_OBJ
+
                                   ┌──────────┐
                                   │   HTTP   │
                                   └──────────┘
@@ -404,8 +466,8 @@ GetDataProtectionPolicy()         #Req: TOPIC
 SUB.Protocol                      #'http[s]'. Send using HTTP request, with POST
 SUB.Endpoint                      #'URL' to send to
 
-TOPIC_ATTRS|SUB_ATTRS             #'DELIVERY_POLICY_JSON'. How to retry on failure???
- .DeliveryPolicy                  #Only with HTTP
+TOPIC_ATTRS|SUB_ATTRS
+ .DeliveryPolicy                  #'DELIVERY_POLICY_JSON'. How to retry on failure???
 TOPIC_ATTRS|SUB_ATTRS
  .EffectiveDeliveryPolicy         #Same but adds default values???
 
@@ -422,26 +484,12 @@ RETRY_POLICY.backoffFunction      #One of 'linear', 'arithmetic', 'geometric', '
 
 SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). No need to process JSON???
 
-TOPIC_ATTRS
- .HTTPSuccessFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
-TOPIC_ATTRS                       #0-100. Percentage of successful MESSAGEs to log???
- .HTTPSuccessFeedbackSampleRate   #Failed MESSAGEs are always logged
-TOPIC_ATTRS
- .HTTPFailureFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
-
                                   ┌────────────┐
                                   │   LAMBDA   │
                                   └────────────┘
 
 SUB.Protocol                      #'lambda'. Send to a Lambda FUNCTION
 SUB.Endpoint                      #'FUNC_ARN'
-
-TOPIC_ATTRS
- .LambdaSuccessFeedbackRoleArn    #???
-TOPIC_ATTRS
- .LambdaSuccessFeedbackSampleRate #???
-TOPIC_ATTRS
- .LambdaFailureFeedbackRoleArn    #???
 
                                   ┌─────────┐
                                   │   SQS   │
@@ -451,13 +499,6 @@ SUB.Protocol                      #'sqs'. Send to a SQS QUEUE
 SUB.Endpoint                      #'QUEUE_ARN'
 
 SUB_ATTRS.RawMessageDelivery      #Like above
-
-TOPIC_ATTRS
- .SQSSuccessFeedbackRoleArn       #???
-TOPIC_ATTRS
- .SQSSuccessFeedbackSampleRate    #???
-TOPIC_ATTRS
- .SQSFailureFeedbackRoleArn       #???
 
                                   ┌─────────────┐
                                   │   KINESIS   │
@@ -470,13 +511,6 @@ SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery s
                                   #Must be assumable by sns.amazonaws.com
                                   #Current principal must have iam:PassRole
 
-TOPIC_ATTRS
- .FirehoseSuccessFeedbackRoleArn  #???
-TOPIC_ATTRS
-.FirehoseSuccessFeedbackSampleRate#???
-TOPIC_ATTRS
- .FirehoseFailureFeedbackRoleArn  #???
-
                                   ┌───────────┐
                                   │   EMAIL   │
                                   └───────────┘
@@ -487,6 +521,12 @@ SUB.Endpoint                      #'EMAIL_ADDRESS'
 TOPIC_ATTRS.DisplayName           #'From' email field
 MESSAGE.Subject                   #'Subject' email field
                                   #Max 100 chars, no control characters nor newlines
+
+                                  ┌───────────────┐
+                                  │   EMAIL IAC   │
+                                  └───────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: DisplayName
 
                                   ┌──────────────────┐
                                   │   SMS SETTINGS   │
@@ -535,10 +575,6 @@ SMS_USAGE[5]                      #NUM. Price in USD
 SMS_USAGE[6]                      #NUM. Part number
 SMS_USAGE[7]                      #NUM. Total number of parts
 
-SMS_ATTRS.DeliveryStatusIAMRole
-SMS_ATTRS
-.DeliveryStatusSuccessSamplingRate#Like above???
-
                                   ┌───────────────────────┐
                                   │   SMS SETTINGS AUTH   │
                                   └───────────────────────┘
@@ -556,6 +592,12 @@ SetSMSAttributes()                #Req: SMS_SETTINGS
 GetSMSAttributes()                #Req: SMS_SETTINGS
                                   #  - attributes OBJ -> 'SMS_ATTR'_ARR
                                   #Res: SMS_SETTINGS
+
+                                  ┌──────────────────────┐
+                                  │   SMS SETTINGS IAC   │
+                                  └──────────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: DisplayName
 
                                   ┌────────────────┐
                                   │   SMS SENDER   │
@@ -727,20 +769,6 @@ APP_PLATFORM_ATTRS
 APP_PLATFORM_ATTRS
  .PlatformCredential              #APP_PLATFORM_TYPE-specific developer secret key
 
-TOPIC_ATTRS.Application
- SuccessFeedbackRoleArn           #???
-TOPIC_ATTRS.Application
- SuccessFeedbackSampleRate        #???
-TOPIC_ATTRS.Application
- FailureFeedbackRoleArn           #???
-
-APP_PLATFORM_ATTRS
- .SuccessFeedbackRoleArn
-APP_PLATFORM_ATTRS
- .SuccessFeedbackSampleRate
-APP_PLATFORM_ATTRS
- .FailureFeedbackRoleArn          #Same as TOPIC_ATTRS???
-
                                   ┌──────────────────────────┐
                                   │   APP PLATFORM ANDROID   │
                                   └──────────────────────────┘
@@ -816,12 +844,6 @@ APP_PLATFORM_ATTRS
  .PlatformPrincipal               #Client ID
 APP_PLATFORM_ATTRS
  .PlatformCredential              #Client secret
-
-                                  ┌───────────────────────┐
-                                  │   APP PLATFORM AUTH   │
-                                  └───────────────────────┘
-
-PACTION iam:PassRole              #Required with APP_PLATFORM_ATTRS.*FeedbackRoleArn???
 
                                   ┌──────────────────────┐
                                   │   APP PLATFORM API   │
