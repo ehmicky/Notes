@@ -13,10 +13,10 @@ TODO:
         - Message delivery
         - Security > Logging and monitoring
   - https://aws.amazon.com/sns/faqs
-  - check sns_backup.txt in Desktop
   - https://aws.amazon.com/sns/pricing
   - search projects on GitHub
   - add summary
+  - update aws_list_services with what SNS does
 
                                   ┌─────────┐
                                   │   API   │
@@ -285,7 +285,10 @@ SUB.SubscriptionArn               #'SUB_ARN'. 'TOPIC_ARN:SUB_MID'
 SUB.TopicArn                      #'TOPIC_ARN'
 SUB.Attributes                    #SUB_ATTRS
 
-SUB.Protocol                      #'PROTOCOL'. All valid values are documented below
+SUB.Protocol                      #'PROTOCOL':
+                                  #  - "A2A" (Application-to-application): HTTP, Lambda, SQS, Kinesis
+                                  #  - "A2P" (Application-to-person): email, SMS, push
+                                  #Each documented below
 SUB.Endpoint                      #PROTOCOL-specific destination, defined below
 
 TOPIC_ATTRS.SubscriptionsDeleted  #NUM of Unsubscribe()
@@ -545,14 +548,18 @@ MESSAGE THROTTLING ==>            #Max MESSAGEs per second to each TOPIC
                                   #  - SMS: 20 (soft)
                                   #  - email: 10
 
-DELIVERY_POLICY.throttlePolicy    #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
- .maxReceivesPerSecond            #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
+DELIVERY_POLICY                   #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
+ .defaultThrottlePolicy           #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
+ .maxReceivesPerSecond            #  - dropped after 1h???
+DELIVERY_POLICY.throttlePolicy    #Same but when using SUB_ATTRS.DeliveryPolicy (as opposed to TOPIC_ATTRS.DeliveryPolicy)
 
                                   ┌──────────────────┐
                                   │   THROTTLE IAC   │
                                   └──────────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: ThrottlePolicy
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: throttlePolicy
+
+CDELIVERY_POLICY.throttlePolicy   #DELIVERY_POLICY.*
 
                                   ┌──────────────────────┐
                                   │   THROTTLE METRICS   │
@@ -587,15 +594,22 @@ ICTOPIC.metricNumberOf
                                   │   RETRY   │
                                   └───────────┘
 
-TOPIC_ATTRS|SUB_ATTRS             #'DELIVERY_POLICY_JSON'
- .DeliveryPolicy                  #Can only be set with HTTP: other PROTOCOLs always use the default value
+TOPIC_ATTRS|SUB_ATTRS
+ .DeliveryPolicy                  #'DELIVERY_POLICY_JSON'
 TOPIC_ATTRS|SUB_ATTRS
  .EffectiveDeliveryPolicy         #Same but also shows default values
+DELIVERY_POLICY.PROTOCOL          #PDELIVERY_POLICY
+                                  #Only allowed PROTOCOL is 'http'. Other PROTOCOLs always use the default value
+DELIVERY_POLICY                   #BOOL (def: true). Ignores SUB_ATTRS.DeliveryPolicy, i.e. only use TOPIC_ATTRS.DeliveryPolicy
+ .disableSubscriptionOverrides    #Seems to be undocumented
 
 DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send NOTIFICATIONs from TOPIC to SUB
                                   #NOTIFICATION is considered failed once no more retries
-                                  #Retries "server-side errors": reached endpoint but failed response
-                                  #Does not retry "client-side errors": could not reach endpoint (auth, deleted endpoint, etc.)
+                                  #Retries "server-side errors":
+                                  #  - reached endpoint but 5** response
+                                  #Does not retry "client-side errors":
+                                  #  - could not reach endpoint (e.g. deleted endpoint, auth)
+                                  #  - 4** response
 RETRY_POLICY.minDelayTarget       #NUM (in secs, min 1). Retry start delay
                                   #Def 20s with HTTP, 10s with email|SMS|APP, 1s else
 RETRY_POLICY.maxDelayTarget       #NUM (in secs, min minDelayTarget, max 1h). Retry end delay
@@ -620,10 +634,9 @@ RETRY_POLICY.numMaxDelayRetries   #NUM. "Post-backoff retries": fourth phase, wi
                                   │   RETRY IAC   │
                                   └───────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: HealthyRetryPolicy
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: healthyRetryPolicy
 
 CSUB_OPTS.deliveryPolicy          #CDELIVERY_POLICY. SUB_ATTRS.DeliveryPolicy
-CDELIVERY_POLICY.throttlePolicy   #DELIVERY_POLICY.*
 CDELIVERY_POLICY
  .healthyRetryPolicy              #CRETRY_POLICY. DELIVERY_POLICY.*
 CRETRY_POLICY.min|maxDelayTarget  #DURATION
@@ -729,6 +742,9 @@ ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Num
                                   #Must be [:print:]
 ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
+
+DATA REDUNDANCY ==>               #MESSAGEs are replicated on multiple AZs
+                                  #Fot both FIFO and non-FIFO
 
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
@@ -1188,7 +1204,9 @@ AWS/SNS/MessagesWith[No]Findings  #NUM of MESSAGEs matching MASK_OP.Audit.[No]Fi
                                   │   HTTP   │
                                   └──────────┘
 
-SUB.Protocol                      #'http[s]'. Send using HTTP request, with POST
+SUB.Protocol                      #'http[s]'. Send using HTTP[S] request, with POST
+                                  #Supports SNI
+                                  #Can use HTTP basic|digest auth
 SUB.Endpoint                      #'http[s]://...' to send to
 
 SUB_CONFIRM                       #Always required
@@ -1207,7 +1225,7 @@ x-amz-sns-rawdelivery: true [C]   #Set if SUB_ATTRS.RawMessageDelivery true (see
                                   │   HTTP IAC   │
                                   └──────────────┘
 
-AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: RequestPolicy
+AWS::SNS::Subscription            #Includes RESPROPs: DeliveryPolicy: requestPolicy
 
 new UrlSubscription               #CCSUB
  ('URL'[, CSUB_OPTS])             #Def CSUB_OPTS.protocol: uses 'URL' scheme
@@ -1406,6 +1424,7 @@ CSUB_OPTS.subscriptionRoleArn     #SUB_ATTRS.SubscriptionRoleArn
                                   └───────────┘
 
 SUB.Protocol                      #'email[-json]'. Send as email (SMTP)
+                                  #Sent from no-reply@sns.amazonaws.com
 SUB.Endpoint                      #'EMAIL_ADDRESS'
 
 SUB_ATTRS.RawMessageDelivery      #Must use PROTOCOL 'email' (false) vs 'email-json' (true) instead
@@ -1413,8 +1432,10 @@ SUB_ATTRS.RawMessageDelivery      #Must use PROTOCOL 'email' (false) vs 'email-j
 SUB_CONFIRM                       #Required. NOTIFICATION with Type '*Confirmation' is sent as email with links instead
 
 TOPIC_ATTRS.DisplayName           #'From' email field
+                                  #Def: 'AWS Notifications Message'
                                   #Max 100 chars, [:alnum:]-_
 MESSAGE.Subject                   #'Subject' email field
+                                  #Def: 'AWS Notification Message'
                                   #Max 100 chars, no control characters nor newlines
 
                                   ┌───────────────┐
@@ -1440,7 +1461,8 @@ MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.
 
 SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
 
-SUB_CONFIRM                       #Not used
+SUB_CONFIRM                       #Required. NOTIFICATION with Type '*Confirmation' is sent as SMS instead
+                                  #Must send SMS back: "Yes DISPLAY_NAME" (ConfirmSubscription()), "Stop" (Unsubscribe())
 
 SMS_UI_SETTINGS                   #Submitted via UI when exiting the sandbox
                                   #SMS_UI_SETTINGS keys are only for documentation, since it is done via UI
@@ -1452,11 +1474,12 @@ SMS_UI_SETTINGS.AppLocation       #STR. Website URL or app name
 SMS_SETTINGS.attributes           #SMS_ATTRS
 SMS_ATTRS.DefaultSenderID         #STR. Sender field
                                   #Max 11 chars, [:alnum:] (at least one letter)
-TOPIC_ATTRS.DisplayName           #SMS title???
+TOPIC_ATTRS.DisplayName           #STR. Use first 10 chars uppercased as start of SMS body, followed by >
                                   #Max 100 chars, [:alnum:]-_
 MESSAGE.Message                   #STR. SMS contents
                                   #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate part
                                   #Max 1600 chars
+MESSAGE.Subject                   #If set, used as MESSAGE.Message
 SMS_UI_SETTINGS.MessageTemplates  #???
 
 SMS_ATTRS.DefaultSMSType          #Either:
@@ -1714,7 +1737,7 @@ APP_PLATFORM_ATTRS
                                   └──────────────────────────┘
 
 APP_PLATFORM.Platform             #'GCM' (Firebase Cloud Messaging)
-                                  #For Android|iOS or web app, using Google Cloud
+                                  #For Android|iOS, web app and Chrome app/extensions, using Google Cloud
 APP_PLATFORM_ATTRS
  .PlatformPrincipal               #None
 APP_PLATFORM_ATTRS                #Either:
@@ -1774,12 +1797,12 @@ APP_PLATFORM_ATTRS
 APP_PLATFORM_ATTRS
  .PlatformCredential              #Secret key
 
-                                  ┌──────────────────────────┐
-                                  │   APP PLATFORM FIRE OS   │
-                                  └──────────────────────────┘
+                                  ┌─────────────────────────┐
+                                  │   APP PLATFORM KINDLE   │
+                                  └─────────────────────────┘
 
 APP_PLATFORM.Platform             #'ADM' (Amazon Device Messaging)
-                                  #For Fire OS
+                                  #For Kindle
 APP_PLATFORM_ATTRS
  .PlatformPrincipal               #Client ID
 APP_PLATFORM_ATTRS
