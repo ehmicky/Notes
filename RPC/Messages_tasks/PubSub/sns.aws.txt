@@ -6,13 +6,15 @@
 VERSION ==>                       #2024-09-24
 
 TODO:
+  - CloudWatch Logs:
+     - revisit MASK_POLICY, since it seems to be a subset of SNS's
   - cdk-monitoring-constructs: see notes in new_services
   - CDK
      - see new_services doc
      - https://github.com/aws/aws-cdk/blob/8ce02838ba5033a6b35123a34e444c4f35350975/packages/aws-cdk-lib/aws-lambda-event-sources/lib/sns.ts
         - https://github.com/aws/aws-cdk/tree/8ce02838ba5033a6b35123a34e444c4f35350975/packages/aws-cdk-lib/aws-lambda-event-sources#sns
-  - CloudWatch Logs:
-     - revisit MASK_POLICY, since it seems to be a subset of SNS's
+  - Logging:
+     - logging example at bottom: https://docs.aws.amazon.com/sns/latest/dg/sns-message-data-protection-operations.html#statement-operation-json-properties-deny
   - https://github.com/aws/aws-js-sns-message-validator
      - https://github.com/aws/aws-php-sns-message-validator
   - SAM:
@@ -24,6 +26,7 @@ TODO:
      - see https://github.com/Admiral-Piett/goaws README for SNS
   - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
      - already done:
+        - Message data protection
         - Security > Logging and monitoring
   - https://aws.amazon.com/sns/faqs
   - check sns_backup.txt in Desktop
@@ -735,10 +738,11 @@ AWS::SNS::TopicPolicy             #RESPROPs: PolicyDocument POLICY_DOC_OBJ, Topi
 TOPIC.DataProtectionPolicy        #'MASK_POLICY_JSON'
                                   #Max 30KB
 
-MASK_POLICY.*                     #Same as CloudWatch logs
+MASK_POLICY
+ .Version|Name|Description        #Same as CloudWatch logs
 MASK_POLICY.Statement             #MASK_STATEMENT_ARR
                                   #Any MASK_OP can be used
-MASK_STATEMENT.*                  #Same as CloudWatch logs, except for following additions
+MASK_STATEMENT.Sid                #Same as CloudWatch logs
 MASK_STATEMENT.Principal          #Like IAM STATEMENT.Principal, including '*'
                                   #If DataDirection:
                                   #  - 'Inbound': who called Publish*()
@@ -748,15 +752,47 @@ MASK_STATEMENT.DataDirection      #Applied on MESSAGEs sent:
                                   #  - 'Outbound': by TOPIC to SUB
 MASK_STATEMENT.Operation          #MASK_OP
 
-MASK_OP.Deidentify.MaskConfig     #Mask the value???
+MASK_OP.Deidentify.MaskConfig
+ .MaskWithCharacter               #Mask the value with 'CHAR'
 
-MASK_OP.Audit.FindingsDestination #Same???
-MPAYLOAD.*                        #Same as CloudWatch logs, except for following additions
+MASK_OP.Deidentify.RedactConfig   #Delete the value
+
+MASK_OP.Deny                      #Empty OBJ. Reject the MESSAGE
+
+MASK_OP.Audit                     #MASK_DESTINATION
+ .FindingsDestination             #Send masked values to a destination
+MASK_OP.Audit                     #MASK_DESTINATION
+ .NoFindingsDestination           #Send MESSAGE to a destination when no marked values
+MASK_OP.Audit.SampleRate          #0 to 100 (def). Only applied on NUM% of MESSAGEs
+
+MASK_DESTINATION
+ .CloudWatchLogs|S3|Firehose      #Like CloudWatch logs, except 'LOG_GROUP' must start with '/aws/vendedlogs/'
+
+MPAYLOAD                          #Payload sent to MASK_DESTINATION
+MPAYLOAD.auditTimestamp           #'DATE'
+MPAYLOAD.resourceArn              #TOPIC_ARN
 MPAYLOAD.messageId                #'MESSAGE_MID'
 MPAYLOAD.callerPrincipal          #MASK_STATEMENT.Principal
+MPAYLOAD.dataIdentifiers          #DDATAID_ARR, like CloudWatch logs
 
-MASK_OP.Deny                      #OBJ???
-                                  #Reject the MESSAGE
+                                  ┌──────────────────────────┐
+                                  │   DATA PROTECTION AUTH   │
+                                  └──────────────────────────┘
+
+
+PACTION logs:CreateLogDelivery
+ |UpdateLogDelivery
+ |ListLogDeliveries
+ |GetLogDelivery
+ |DeleteLogDelivery               #Required for MASK_DESTINATION
+PACTION logs:PutResourcePolicy
+ |DescribeResourcePolicies
+ |DescribeLogGroups               #Required for MASK_DESTINATION.CloudWatchLogs.LogGroup
+PACTION s3:PutBucketPolicy        #Required for MASK_DESTINATION.S3.Bucket
+ |GetBucketPolicy                 #Also kms:* if SSE-KMS
+PACTION
+ iam:CreateServiceLinkedRole
+PACTION firehose:TagDeliveryStream#Required for MASK_DESTINATION.Firehose.DeliveryStream
 
                                   ┌─────────────────────────┐
                                   │   DATA PROTECTION API   │
@@ -775,6 +811,13 @@ GetDataProtectionPolicy()         #Req: TOPIC
                                   └─────────────────────────┘
 
 AWS::SNS::Topic                   #Includes RESPROPs: DataProtectionPolicy MASK_POLICY_OBJ
+
+                                  ┌─────────────────────────────┐
+                                  │   DATA PROTECTION METRICS   │
+                                  └─────────────────────────────┘
+
+AWS/SNS/MessagesWith[No]Findings  #NUM of MESSAGEs matching MASK_OP.Audit.[No]FindingsDestination
+                                  #Requires MASK_OP.Audit
 
                                   ┌──────────┐
                                   │   HTTP   │
