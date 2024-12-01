@@ -5,7 +5,7 @@
 
 To learn:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html
-     - stopped at Features and capabilities > Message metadata for Amazon SQS
+     - stopped at Features and capabilities > Short and long polling
      - already done:
         - Temporary queues
         - Best Practices > Error handling and problematic messages
@@ -500,8 +500,9 @@ MESSAGE_RCV_RES
  .Attributes.SYS_ATTR             #STR
 
 ATTR_VALUE.DataType               #Value's type among 'String', 'Number' or 'Binary'
-                                  #Can append with any '.DESCRIPTION', e.g. 'Number.float'
+                                  #Can append with any '.DESCRIPTION', e.g. 'Number.float', max 256 chars
 ATTR_VALUE.StringValue            #STR. Value, when DataType 'String|Number'
+                                  #'NUM' must be single-precision float
 ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
 
@@ -510,8 +511,18 @@ QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
 
 MESSAGE_RES.MD5OfMessageBody      #MD5 'HASH' of 'MESSAGE_BODY', after base64 decoding
 MESSAGE_RCV_RES.MD5OfBody         #Meant for integrity checking
-MESSAGE[_RCV]_RES
- .MD5OfMessageAttributes          #Same for MessageAttributes
+MESSAGE[_RCV]_RES                 #Same for MessageAttributes
+ .MD5OfMessageAttributes          #Computation:
+                                  #  - concatenation of all MESSAGE_ATTRs
+                                  #     - sorted by 'MESSAGE_ATTR'
+                                  #  - each MESSAGE_ATTR concatenates:
+                                  #     - 'MESSAGE_ATTR'
+                                  #     - DataType
+                                  #     - DataType === 'Binary'
+                                  #     - StringValue|BinaryValue
+                                  #  - each of those is encoded as:
+                                  #     - 4 bytes for length, then value
+                                  #     - for `DataType === 'Binary'`: single byte 1 (not Binary) or 2 (Binary)
 MESSAGE_RES
  .MD5OfMessageSystemAttributes    #Same for MessageSystemAttributes
 
@@ -686,7 +697,7 @@ ICQUEUE.metricApproximateNumberOf
 
 QUEUE_ATTRS|MESSAGES_RCV          #NUM (min 0, def 30s, max 12h)
  |MESSAGE_VSB.VisibilityTimeout   #Locks MESSAGE for NUM secs after each ReceiveMessage()
-                                  #I.e. any other ReceiveMessage() fails
+                                  #During that time, any other ReceiveMessage() will not receive that MESSAGE
                                   #Must be > duration to process the MESSAGE
                                   #Used on both first ReceiveMessage() and any retry
 
@@ -704,9 +715,10 @@ PROCESSING EXTENSION ==>          #Can increase processing time with ChangeMessa
 
 PROCESSING TIMEOUT ==>            #When VisibilityTimeout reached before DeleteMessage()
                                   #MESSAGE is considered failed ("poison pill")
-                                  #Can then retry ReceiveMessage() right away
+                                  #Other receivers can now retry that MESSAGE though
 
-PROCESSING FAILURE ==>            #If processing failed (i.e. before VisibilityTimeout), should ChangeMessageVisibility()
+PROCESSING FAILURE ==>            #If processing failed, should ChangeMessageVisibility()
+                                  #  - as opposed to processing timing out, i.e. before VisibilityTimeout
                                   #This sets the min duration before next retry
                                   #Can be 0 to allow retries right away
                                   #Recommended, else the VisibilityTimeout left would be used instead
@@ -733,6 +745,7 @@ GHOST RECEIVE ==>                 #In rare occasions, ReceiveMessage() might:
                                   #Receiver cannot know, i.e. MESSAGE will fail once VisibilityTimeout expires
 
 FIFO ==>                          #The whole MESSAGE_GROUP is locked instead, not just the MESSAGE
+                                  #I.e. processing that MESSAGE_GROUP is blocked
 
 PREFETCHING ==>                   #Receiver can prefetch|buffer MESSAGEs
                                   #Pro: reduces latency
@@ -1200,7 +1213,8 @@ EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN (FIFO or not)
                                   #Set Lambda FUNCTION as receiver, automatically:
                                   #  - passes MESSAGEs from ReceiveMessage() as REQ
                                   #  - calls DeleteMessage() on successful RES
-                                  #  - retries on failed RES (after VisibilityTimeout expires)
+                                  #  - noop on failed RES
+                                  #     - i.e. let MESSAGE fail after VisibilityTimeout
                                   #QUEUE and FUNCTION:
                                   #  - must be in same REGION
                                   #  - but can be cross-ACCOUNTs
@@ -1228,7 +1242,11 @@ EVENT_SOURCE                      #NUM. Max CONCURRENCY of the FUNCTION
 EVENT_SOURCE.FilterCriteria       #Filters against LMESSAGE
                                   #LMESSAGE.body is OBJ (not 'OBJ_JSON') if valid JSON, else STR
 
-QUEUE_ATTRS.VisibilityTimeout     #Recommended value: FUNC_VERSION.Timeout * (REDRIVE_POLICY.maxReceiveCount + 1) + MaximumBatchingWindowInSeconds
+QUEUE_ATTRS.VisibilityTimeout     #Recommended value is sum of:
+                                  #  - EVENT_SOURCE.MaximumBatchingWindowInSeconds
+                                  #  - FUNC_VERSION.Timeout
+                                  #  - potential time spent throttled by Lambda due to too many invocations
+                                  #     - documentation recommends: FUNC_VERSION.Timeout * 5
 
 sqs-consumer                      #Alternative for long-runner instances. See its doc
 
