@@ -6,9 +6,7 @@
 VERSION ==>                       #2024-09-24
 
 TODO:
-  - LMESSAGE, rawMessageDelivery -> own chapter, different name
-  - CDK
-     - see new_services doc
+  - CDK new_services: stopped at cdklabs
   - Logging:
      - logging example at bottom: https://docs.aws.amazon.com/sns/latest/dg/sns-message-data-protection-operations.html#statement-operation-json-properties-deny
   - https://github.com/aws/aws-js-sns-message-validator
@@ -578,6 +576,18 @@ AWS/SNS/                          #NUM of MESSAGEs successfully sent from SUBs
                                   #cdk-monitoring-constructs:
                                   #  - sum: METRIC, summary WIDGET
 
+                                  ┌──────────────────────────┐
+                                  │   THROTTLE METRICS IAC   │
+                                  └──────────────────────────┘
+
+ICTOPIC
+ .metricNumberOfMessagesPublished
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+ICTOPIC.metricNumberOf
+ NotificationsDelivered
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
                                   ┌───────────┐
                                   │   RETRY   │
                                   └───────────┘
@@ -634,6 +644,14 @@ AWS/SNS/                          #NUM of MESSAGEs failed to be sent from SUBs
                                   #  - sum: METRIC, summary WIDGET, MALARM MessageNotificationsFailed > CXALARM_OPTS.maxNotificationsFailedCount
 
                                   ┌───────────────────────┐
+                                  │   RETRY METRICS IAC   │
+                                  └───────────────────────┘
+
+ICTOPIC.metricNumberOf
+ NotificationsFailed
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+                                  ┌───────────────────────┐
                                   │   DEAD-LETTER QUEUE   │
                                   └───────────────────────┘
 
@@ -682,7 +700,8 @@ ES7000                            #SUB_ATTRS.RedrivePolicy must be set
                                   │   MESSAGE   │
                                   └─────────────┘
 
-MESSAGE                           #Max 256KB (soft)
+MESSAGE                           #Payload sent from Publish*() to TOPIC
+                                  #Max 256KB (soft)
                                   #Max header 16KB??? (soft)
 
 MESSAGE_RES.MessageId             #'MESSAGE_MID'
@@ -704,11 +723,6 @@ ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Num
 ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
 
-SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). Use MESSAGE_BODY as LMESSAGE
-                                  #As opposed to setting LMESSAGE.* including LMESSAGE.Message 'MESSAGE_BODY'
-                                  #Only for HTTP, SQS, Firehose
-                                  #Also for email, but using 'PROTOCOL' 'email' (true) vs 'email-json' (false)
-
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
                                   └─────────────────┘
@@ -729,13 +743,6 @@ EXTENDED CLIENT LIBRARY ==>       #Client built on top of Java|Python SDK, that 
                                   ┌─────────────────┐
                                   │   MESSAGE IAC   │
                                   └─────────────────┘
-
-AWS::SNS::Subscription            #Includes RESPROPs: RawMessageDelivery
-
-CSUB_OPTS.rawMessageDelivery      #SUB_ATTRS.RawMessageDelivery
-
-CSUB_OPTS.json                    #BOOL (def: false). Whether 'PROTOCOL' is 'email' or 'email-json'
-                                  #Only with new EmailSubscription()
 
 CTOPIC.grantPublish(YGRANTABLE)
  ->CGRANT                         #Allows sns:Publish
@@ -778,18 +785,6 @@ AWS/SNS/PublishSize               #Size of MESSAGEs
                                   ┌─────────────────────────┐
                                   │   MESSAGE METRICS IAC   │
                                   └─────────────────────────┘
-
-ICTOPIC
- .metricNumberOfMessagesPublished
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-
-ICTOPIC.metricNumberOf
- NotificationsDelivered
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-
-ICTOPIC.metricNumberOf
- NotificationsFailed
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
 
 ICTOPIC.metricPublishSize
  ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Average'
@@ -847,6 +842,46 @@ PublishBatch()                    #Req: BATCH
 
 CLOUDTRAIL ==>                    #Like Publish()
 
+                                  ┌──────────────────┐
+                                  │   NOTIFICATION   │
+                                  └──────────────────┘
+
+NOTIFICATION                      #Payload sent from TOPIC to SUBs
+
+SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). Use MESSAGE_BODY itself as NOTIFICATION
+                                  #As opposed to setting NOTIFICATION.* documented below
+                                  #  - including NOTIFICATION.Message 'MESSAGE_BODY'
+
+NOTIFICATION.Type                 #Always 'Notification'
+NOTIFICATION.Timestamp            #DATE_NUM
+
+NOTIFICATION.Message              #MESSAGE.Message
+                                  #Can JSON parse it using either
+                                  #  - QUERY SNS JMESPath 'QUERY' (see its doc)
+                                  #  - @middy/event-normalizer (see its doc)
+                                  #     - including when invoked from SQS SUBSCRIPTION
+NOTIFICATION.TopicArn|MessageId
+ |MessageAttributes|Subject       #MESSAGE.*
+NOTIFICATION.MessageAttributes    #MESSAGE_ATTRS except DataType -> Type, StringValue|BinaryValue -> Value
+
+NOTIFICATION.UnsubscribeUrl       #URL to unsubscribe anonymously
+                                  #I.e. 'https://sns.REGION.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=SUBSCRIPTION_ARN'
+
+NOTIFICATION.SignatureVersion     #TOPIC_ATTRS.SignatureVersion
+NOTIFICATION.Signature            #'BASE64'. Encryption signature
+NOTIFICATION.SigningCertURL       #URL to encryption PEM
+
+                                  ┌──────────────────────┐
+                                  │   NOTIFICATION IAC   │
+                                  └──────────────────────┘
+
+AWS::SNS::Subscription            #Includes RESPROPs: RawMessageDelivery
+
+CSUB_OPTS.rawMessageDelivery      #SUB_ATTRS.RawMessageDelivery
+
+CSUB_OPTS.json                    #BOOL (def: false). Whether 'PROTOCOL' is 'email' or 'email-json'
+                                  #Only with new EmailSubscription()
+
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
                                   └────────────────┘
@@ -876,6 +911,12 @@ CTOPIC_OPTS.signatureVersion      #TOPIC_ATTRS.SignatureVersion
 
 CTOPIC_OPTS|CTOPIC_MPOLICY_OPTS   #BOOL (def: false, recommended: true). Adds a POLICY which denies sns:Publish on TOPIC from any PRINCIPAL
  .enforceSSL                      #if COND_KEY aws:SecureTransport false
+
+                                  ┌─────────────────────┐
+                                  │   ENCRYPTION LINT   │
+                                  └─────────────────────┘
+
+cdk-nag SNSTopicSSLPublishOnly    #Must set CTOPIC_OPTS.enforceSSL true, if SSE-KMS
 
                                   ┌─────────────┐
                                   │   LOGGING   │
@@ -1117,6 +1158,8 @@ SUB.Protocol                      #'lambda'. Send to a Lambda FUNCTION
                                   #Not with FIFO
 SUB.Endpoint                      #'FUNC_ARN'
 
+SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if false
+
 INVOCATION ==>                    #InvocationType 'Event'
                                   #No response
 
@@ -1162,24 +1205,7 @@ REQ.Records                       #LRECORD_ARR. Only one item???
 LRECORD.EventVersion              #Always '1.0'
 LRECORD.EventSource               #Always 'aws:sns'
 LRECORD.EventSubscriptionArn      #'SUBSCRIPTION_ARN'
-
-LRECORD.Sns                       #LMESSAGE
-LMESSAGE.Type                     #Always 'Notification'
-LMESSAGE.Timestamp                #DATE_NUM
-LMESSAGE.Message                  #MESSAGE.Message
-                                  #Can JSON parse it using either
-                                  #  - QUERY SNS JMESPath 'QUERY' (see its doc)
-                                  #  - @middy/event-normalizer (see its doc)
-                                  #     - including when invoked from SQS SUBSCRIPTION
-LMESSAGE.TopicArn|MessageId
- |MessageAttributes|Subject       #MESSAGE.*
-LMESSAGE.MessageAttributes        #MESSAGE_ATTRS except DataType -> Type, StringValue|BinaryValue -> Value
-
-LMESSAGE.UnsubscribeUrl           #URL to unsubscribe anonymously: 'https://sns.REGION.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=SUBSCRIPTION_ARN'
-
-LMESSAGE.SignatureVersion         #TOPIC_ATTRS.SignatureVersion
-LMESSAGE.Signature                #'BASE64'. Encryption signature
-LMESSAGE.SigningCertURL           #URL to encryption PEM
+LRECORD.Sns                       #NOTIFICATION
 
                                   ┌─────────┐
                                   │   SQS   │
@@ -1189,9 +1215,9 @@ SUB.Protocol                      #'sqs'. Send to a SQS QUEUE
 SUB.Endpoint                      #'QUEUE_ARN'
                                   #Cannot use SSE-KMS
 
-MESSAGE_BODY                      #LMESSAGE (see above)
+MESSAGE_BODY                      #Is NOTIFICATION
 
-SUB_ATTRS.RawMessageDelivery      #If true (see above), max 10 MESSAGE_ATTRs
+SUB_ATTRS.RawMessageDelivery      #If true, max 10 MESSAGE_ATTRs
 
                                   ┌──────────────┐
                                   │   SQS AUTH   │
@@ -1270,6 +1296,8 @@ CSUB_OPTS.subscriptionRoleArn     #SUB_ATTRS.SubscriptionRoleArn
 SUB.Protocol                      #'email[-json]'. Send as email (SMTP)
 SUB.Endpoint                      #'EMAIL_ADDRESS'
 
+SUB_ATTRS.RawMessageDelivery      #Must use PROTOCOL 'email' (false) vs 'email-json' (true) instead
+
 TOPIC_ATTRS.DisplayName           #'From' email field
                                   #Max 100 chars, [:alnum:]-_
 MESSAGE.Subject                   #'Subject' email field
@@ -1295,6 +1323,8 @@ SUB.Endpoint                      #'PHONE_NUMBER'
                                   #E.164 format, i.e. use + followed by multiple digits
 MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
                                   #I.e. send a MESSAGE without using a TOPIC
+
+SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
 
 SMS_UI_SETTINGS                   #Submitted via UI when exiting the sandbox
                                   #SMS_UI_SETTINGS keys are only for documentation, since it is done via UI
@@ -1496,6 +1526,8 @@ APP_ENDPOINT.EndpointArn          #'APP_ENDPOINT_ARN'
 MESSAGE.TargetArn                 #'APP_ENDPOINT_ARN', specified instead of MESSAGE.TopicArn
                                   #I.e. send a MESSAGE without using a TOPIC
 APP_ENDPOINT.Attributes           #APP_ENDPOINT_ATTRS
+
+SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
 
 APP_ENDPOINT                      #Mobile device
                                   #Creating is idempotent
