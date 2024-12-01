@@ -6,11 +6,8 @@
 VERSION ==>                       #2024-09-24
 
 TODO:
-  - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
-     - Best practices
-     - Code examples
-  - https://aws.amazon.com/sns/faqs
-  - https://aws.amazon.com/sns/pricing
+  - go through this whole doc again
+  - https://github.com/devinstewart/sns-payload-validator
   - search projects on GitHub
   - add summary
   - update aws_list_services with what SNS does
@@ -48,6 +45,39 @@ THROTTLING ==>                    #3000|900|150|30/s (REGION-specific, soft): *T
                                   #10/s: *Permission*(), *Tag*(), ListPhoneNumbersOptedOut(), GetSMSSandboxAccountStatus()
                                   #1/s (soft): PutDataProtectionPolicy()
                                   #1/s: *SMSSandboxPhoneNumber*(), SetSMSAttributes(), ListOriginationNumbers()
+
+PRICING ==>                       #1$ per 2e6 API calls
+                                  #  - for any API call
+                                  #     - including Publish(), PublishBatch(), Subscribe(), etc.
+                                  #  - free: 1e6/month
+                                  #  - FIFO Publish[Batch](): 30% more expensive + 1$ per 60GB request payload
+                                  #  - if request payload >64KB, (size % 64KB) times more expensive
+                                  #NOTIFICATIONs:
+                                  #  - HTTP: 1$ per 1.7e6 NOTIFICATIONs
+                                  #     - free: 1e5/month
+                                  #  - Lambda: cost of Lambda
+                                  #  - SQS: cost of SQS
+                                  #     - FIFO: 1$ per 1e8 NOTIFICATIONs + 1$ per 1TB request payload
+                                  #  - Kinesis: cost of Kinesis + 1$ per 5e6 NOTIFICATIONs
+                                  #  - email: 1$ per 5e4 NOTIFICATIONs
+                                  #     - free: 1e3/month
+                                  #  - SMS: cost of End User Messaging SMS
+                                  #  - push: 1$ per 2e6 NOTIFICATIONs
+                                  #     - free: 1e6/month
+                                  #  - if request payload >64KB, (size % 64KB) times more expensive (except with FIFO)
+                                  #1$ per 11GB of API's response payload
+                                  #  - not request payload
+                                  #  - free: first 15GB/month, shared with all other AWS services
+                                  #  - 6% cheaper after 10TB, 22% after 50TB, 44% after 150TB
+                                  #  - max 500 TB/month (soft)
+                                  #FILTERS:
+                                  #  - 1$ per 11GB of MESSAGE_BODY (min 1KB per MESSAGE)
+                                  #  - only if SUB_ATTRS.FilterPolicyScope 'MessageBody'
+                                  #REPLAY:
+                                  #  - 1$ per 45GB archived (min 1 day per MESSAGE)
+                                  #  - 1$ per 10GB replayed
+                                  #MASK_OP.Deidentify|Deny: 1$ per 12GB MESSAGE_BODY (min 1KB per MESSAGE)
+                                  #MASK_OP.Audit: 1$ per 5GB of logs
 
                                   ┌──────────┐
                                   │   AUTH   │
@@ -655,12 +685,13 @@ ES7000                            #SUB_ATTRS.RedrivePolicy must be set
 
 MESSAGE                           #Payload sent from Publish*() to TOPIC
                                   #Max 256KB (soft)
-                                  #Max header 16KB??? (soft)
 
 MESSAGE_RES.MessageId             #'MESSAGE_MID'
 MESSAGE.TopicArn                  #'TOPIC_ARN'
 
 MESSAGE.Message                   #'MESSAGE_BODY'
+                                  #No C0 control chars (except \t \n \r), surrogate (U+d800 to U+dfff), U+fffe|ffff
+
 MESSAGE.MessageStructure          #If 'json' (def: undefined), MESSAGE_BODY is 'OBJ_JSON' of {PROTOCOL|default: 'MESSAGE_BODY', ...}
                                   #I.e. PROTOCOL-specific MESSAGE_BODY
                                   #One `default` is required
@@ -815,6 +846,7 @@ CLOUDTRAIL ==>                    #Like Publish()
                                   └──────────────────┘
 
 NOTIFICATION                      #Payload sent from TOPIC to SUBs
+                                  #I.e. one MESSAGE might lead to 0, 1 or several NOTIFICATIONs
 
 SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). Use MESSAGE_BODY itself as NOTIFICATION
                                   #As opposed to setting NOTIFICATION.* documented below
@@ -847,10 +879,10 @@ CSUB_OPTS.json                    #BOOL (def: false). Whether 'PROTOCOL' is 'ema
                                   └───────────────┘
 
 TOPIC_ATTRS|NOTIFICATION          #ALGO used for the integrity signature. Either:
- .SignatureVersion                #  - '1' (def): 'RSA-SHA1'
-                                  #  - '2' (recommended): 'RSA-SHA256'
+ .SignatureVersion                #  - '1' (def): 'sha1WithRSAEncryption'
+                                  #  - '2' (recommended): 'sha256WithRSAEncryption'
 
-NOTIFICATION.SigningCertURL       #'https://sns.REGION.amazon.com/ID.pem' to X509 certificate's PEM file
+NOTIFICATION.SigningCertURL       #'https://sns.REGION.amazon.com/SimpleNotificationService-ID.pem' to X509 certificate's PEM file
                                   #Should check that the URL follows this format, to avoid injection
                                   #Contents is 'PEM'
                                   #If fetched, should cache it for performance
@@ -865,7 +897,8 @@ CRYPTO
  ->BOOL                           #  - i.e. mostly useful for HTTP
 
 NOTIFICATION_ENTRIES              #Ordered newline-separated list of NOTIFICATION.* key + value
-                                  #For: Message, MessageId, Subject (if any), SubscribeURL (if any), Timestamp, Token (if any), TopicArn, Type
+                                  #For: Message, MessageId, Subject (if not null|undefined), SubscribeURL (if not undefined),
+                                  # Timestamp, Token (if not null), TopicArn, Type
                                   #Not checked for integrity: MessageAttributes, UnsubscribeURL
 
                                   ┌───────────────────┐
@@ -886,6 +919,20 @@ VALIDATOR.validate                #Checks NOTIFICATION.Signature
  FUNC([ERROR]))                   #  - NOTIFICATION shape is normal
                                   #  - NOTIFICATION.SigningCertURL is right domain name
                                   #Caches 'PEM' in-process
+
+sns-validator                     #Alternative to sns-payload-validator
+                                  #GitHub repository is aws/aws-js-sns-message-validator
+                                  #Not well maintained
+
+new Validator([OPTS])             #VALIDATOR
+
+VALIDATOR.validate                #Checks NOTIFICATION.Signature
+ (NOTIFICATION[_JSON])->>         #Throw if fails
+                                  #Also validates that NOTIFICATION.SigningCertURL matches pattern above
+
+OPTS.useCache                     #BOOL (def: true). Caches downloaded 'PEM' using lru-cache (see its doc)
+OPTS.maxCerts                     #NUM (def: 1e3) of 'PEM' to cache
+OPTS.requestAgent                 #HTTPS AGENT (def: none)
 
                                   ┌───────────────────┐
                                   │   INTEGRITY IAC   │
@@ -957,7 +1004,6 @@ LRES.destination                  #SUB.Endpoint
 LRES.statusCode                   #STATUS_NUM from SUB response
 LRES.providerResponse             #STR body from SUB response
 LRES.dwellTimeMs                  #NUM (in ms). Duration between TOPIC and SUB
-LRES.token                        #STR???
 
                                   ┌──────────────────┐
                                   │   LOGGING AUTH   │
@@ -1517,6 +1563,9 @@ CTOPIC_OPTS.displayName           #TOPIC_ATTRS.*
 SUB.Protocol                      #'sms'. Send an SMS
                                   #Uses AWS End User Messaging SMS under-the-hood
                                   #  - should be used instead if need more advanced features
+                                  #Can be heavily regulated, and country-specific
+                                  #  - UI to signup might need to be approved, and include specific words
+                                  #  - any interaction's log might need to be retained
 
 SUB_CONFIRM                       #Required. NOTIFICATION with Type '*Confirmation' is sent as SMS instead
                                   #Must send SMS back: "Yes DISPLAY_NAME" (ConfirmSubscription())
@@ -1557,13 +1606,21 @@ TOPIC_ATTRS.DisplayName           #STR. Use first 10 chars uppercased as start o
                                   #Max 100 chars, [:alnum:]-_
 
 MESSAGE.Message                   #STR. SMS contents
-                                  #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate part
-                                  #Max 1600 chars
+                                  #Each 160 chars (cut at whitespaces) create a separate part
+                                  #  - 140 chars if any non-GSM char
+                                  #  - 70 chars if any UTF-16 char
+                                  #Max 10 parts
 MESSAGE.Subject                   #If set, used as MESSAGE.Message
                                   #Purpose: when a SUB of a different PROTOCOL (e.g. email) is using MESSAGE.Subject
 
 SMESSAGE.TTL                      #NUM (in secs). Timeout to send SMS
                                   #Can be set in UI, but how it is set in the API is undocumented
+
+BEST PRACTICES ==>                #Include sender information in SMS body
+                                  #Keep SMS body neutral, not personal
+                                  #Be honest about money-related offers and avoid currency symbols
+                                  #Use link shorteners
+                                  #Avoid abbreviations
 
                                   ┌──────────────────────┐
                                   │   SMS MESSAGE AUTH   │
@@ -1688,6 +1745,7 @@ LRES.phoneCarrier                 #STR
 
 SMS_UI_SETTINGS.OptInMethod       #Description on how receivers opt in to SMSs
                                   #Unsolicited MESSAGEs are not allowed
+                                  #  - including sending additional SMSs for users to reply to the SUB_CONFIRM
 
 SMS_BLOCK.phoneNumber             #'PHONE_NUMBER'
 SMS_BLOCK.isOptedOut              #BOOL. Whether receiver opted out of receiving SMSs
@@ -1884,6 +1942,8 @@ SMS_UI_SETTINGS.MessageTemplates
                                   └───────────────────┘
 
 SUB.Protocol                      #'application'. Send as a mobile|desktop push notification
+                                  #Probably uses AWS End User Messaging Push under-the-hood
+                                  #  - should be used instead if need more advanced features
 SUB.Endpoint
 PUSH_ENDPOINT.EndpointArn         #'PUSH_ENDPOINT_ARN'
 MESSAGE.TargetArn                 #'PUSH_ENDPOINT_ARN', specified instead of MESSAGE.TopicArn
