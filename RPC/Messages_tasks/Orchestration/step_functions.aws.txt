@@ -216,8 +216,10 @@ StartSyncExecution()              #Req:
                                   #Res: EXEC
                                   #  - no mapRunArn, redrive*, stateMachineVersionArn|stateMachineAliasArn
                                   #  - only one with billingDetails
-ListExecutions()                  #Req:
-                                  #  - EXEC: only either stateMachineArn or mapRunArn
+ListExecutions()                  #Req: EXEC
+                                  #  - only either stateMachineArn or mapRunArn
+                                  #  - only status -> statusFilter
+                                  #  - only one with redriveFilter
                                   #Res: executions EXEC_ARR
                                   #  - no cause, error, input*|output*, redriveStatus[Reason], traceHeader
                                   #  - only one with itemCount
@@ -257,21 +259,150 @@ EXEC_BILLING.billedMemoryUsedInMB #NUM
 
 EXEC_GET.includedData             #STR
 
-TO MOVE ==>
+AVAILABLE EVENT_TYPES ==>         #ExecutionStarted ExecutionSucceeded ExecutionAborted ExecutionTimedOut ExecutionFailed
+EVENT_INFO.roleArn                #STR
+                                  #With EVENT_TYPE ExecutionStarted
+EVENT_INFO.stateMachineAliasArn   #STR
+                                  #With EVENT_TYPE ExecutionStarted
+EVENT_INFO.stateMachineVersionArn #STR
+                                  #With EVENT_TYPE ExecutionStarted
+
+                                  ┌─────────────┐
+                                  │   REDRIVE   │
+                                  └─────────────┘
+
+RedriveExecution()                #Req: REDRIVE
+                                  #Res: EXEC
+                                  #  - only redriveDate
+
+REDRIVE.executionArn              #'EXEC_ARN'
+REDRIVE.clientToken               #STR
+
 EXEC.redriveCount                 #NUM
 EXEC.redriveDate                  #DATE_NUM
 EXEC.redriveStatus                #STR
 EXEC.redriveStatusReason          #STR
+EXEC.redriveFilter                #STR
 
-TO MOVE ==>
-EXEC.mapRunArn                    #'MAP_RUN_ARN'
-EXEC.itemCount                    #NUM
+                                  ┌────────────┐
+                                  │   EVENTS   │
+                                  └────────────┘
 
-RedriveExecution()                #Req:
-                                  #Res:
+GetExecutionHistory()             #Req: EVENTS_REQ
+                                  #Res: events EVENT_ARR
 
-GetExecutionHistory()             #Req:
-                                  #Res:
+EVENTS_REQ.executionArn           #'EXEC_ARN'
+EVENTS_REQ.includeExecutionData   #BOOL
+EVENTS_REQ.reverseOrder           #BOOL
+
+EVENT.id                          #EVENT_MID. Serial NUM, 1-indexed
+EVENT.previousEventId             #EVENT_MID, if any
+EVENT.timestamp                   #DATE_NUM
+
+EVENT.type                        #'EVENT_TYPE' (PascalCase)
+                                  #Available ones documented in this doc
+EVENT.EVENT_TYPEEventDetails      #EVENT_TYPE-specific EVENT_INFO
+                                  #EVENT_TYPE is camelCase
+                                  #EVENT_TYPE *StateEntered|StateExited -> stateEntered|stateExited
+                                  #undefined some EVENT_TYPEs
+
+EVENT_INFO.input                  #'JSON'
+                                  #Max 260KB
+                                  #With EVENT_TYPEs:
+                                  #  - *StateEntered
+                                  #  - ActivityScheduled
+                                  #  - ExecutionStarted
+                                  #  - LambdaFunctionScheduled
+EVENT_INFO.inputDetails.truncated #BOOL
+                                  #With same EVENT_TYPEs as EVENT_INFO.input
+
+EVENT_INFO.output                 #'JSON'
+                                  #Max 260KB
+                                  #With EVENT_TYPEs:
+                                  #  - *StateExited
+                                  #  - ActivitySucceeded
+                                  #  - ExecutionSucceeded
+                                  #  - LambdaFunctionSucceeded
+                                  #  - TaskSubmitted, TaskSucceeded
+EVENT_INFO.outputDetails.truncated#BOOL
+                                  #With same EVENT_TYPEs as EVENT_INFO.output
+
+EVENT_INFO.assignedVariables.STR  #STR
+                                  #With EVENT_TYPE *StateExited
+EVENT_INFO
+ .assignedVariablesDetails        #BOOL
+ .truncated                       #With EVENT_TYPE *StateExited
+
+EVENT_INFO.error                  #STR
+                                  #With EVENT_TYPEs:
+                                  #  - *Failed (except MapIterationFailed, MapStateFailed, ParallelStateFailed)
+                                  #  - *TimedOut
+                                  #  - ExecutionAborted
+EVENT_INFO.cause                  #STR
+                                  #With same EVENT_TYPEs as EVENT_INFO.error
+
+EVENT_INFO.timeoutInSeconds       #NUM
+                                  #With EVENT_TYPEs *Scheduled
+
+EVENT_INFO.heartbeatInSeconds     #NUM
+                                  #With EVENT_TYPEs ActivityScheduled and TaskScheduled
+
+EVENT_INFO.taskCredentials.roleArn#'ROLE_ARN'
+                                  #With EVENT_TYPEs LambdaFunctionScheduled and TaskScheduled
+
+AVAILABLE EVENT_TYPES ==>         #ExecutionRedriven MapRunRedriven
+EVENT_INFO.redriveCount           #NUM
+                                  #With EVENT_TYPEs ExecutionRedriven and MapRunRedriven
+                                  #Different descriptions in
+                                  #https://docs.aws.amazon.com/step-functions/latest/apireference/API_ExecutionRedrivenEventDetails.html#StepFunctions-Type-ExecutionRedrivenEventDetails-redriveCount???
+                                  #And
+                                  #https://docs.aws.amazon.com/step-functions/latest/apireference/API_MapRunRedrivenEventDetails.html#StepFunctions-Type-MapRunRedrivenEventDetails-redriveCount???
+
+AVAILABLE EVENT_TYPES ==>         #MapRunStarted MapRunSucceeded MapRunAborted MapRunFailed
+EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
+                                  #With EVENT_TYPEs MapRunStarted and MapRunRedriven
+
+AVAILABLE EVENT_TYPES ==>         #MapIterationStarted MapIterationSucceeded MapIterationAborted MapIterationFailed
+EVENT_INFO.index                  #NUM
+                                  #With EVENT_TYPEs MapIteration*
+EVENT_INFO.name                   #'STATE'
+                                  #Max 80 chars, [:alnum:]-_
+                                  #With EVENT_TYPEs MapIteration*, *StateEntered, *StateExited
+
+AVAILABLE EVENT_TYPES ==>         #LambdaFunctionScheduled LambdaFunctionScheduleFailed LambdaFunctionStarted
+                                  #LambdaFunctionStartFailed LambdaFunctionSucceeded LambdaFunctionTimedOut LambdaFunctionFailed
+EVENT_INFO.resource               #STR
+                                  #With EVENT_TYPE LambdaFunctionScheduled
+
+AVAILABLE EVENT_TYPES ==>         #ActivityScheduled ActivityScheduleFailed ActivityStarted ActivitySucceeded ActivityTimedOut ActivityFailed
+EVENT_INFO.resource               #STR
+                                  #With EVENT_TYPE ActivityScheduled
+EVENT_INFO.workerName             #STR
+                                  #With EVENT_TYPE ActivityStarted
+
+AVAILABLE EVENT_TYPES ==>         #TaskSubmitted TaskSubmitFailed TaskScheduled TaskStarted TaskStartFailed TaskSucceeded TaskTimedOut TaskFailed
+EVENT_INFO.resource               #STR
+                                  #With EVENT_TYPEs Task* (except TaskState*)
+EVENT_INFO.resourceType           #STR
+                                  #With same EVENT_TYPEs as EVENT_INFO.resource
+EVENT_INFO.parameters             #STR
+                                  #With EVENT_TYPE TaskScheduled
+EVENT_INFO.region                 #STR
+                                  #With EVENT_TYPE TaskScheduled
+
+AVAILABLE EVENT_TYPES ==>         #MapStateEntered MapStateExited MapStateStarted MapStateSucceeded MapStateAborted MapStateFailed
+EVENT_INFO.length                 #NUM
+                                  #With EVENT_TYPE MapStateStarted
+
+AVAILABLE EVENT_TYPES ==>         #EvaluationFailed
+EVENT_INFO.location               #STR
+                                  #With EVENT_TYPE EvaluationFailed
+EVENT_INFO.state                  #STR
+                                  #With EVENT_TYPE EvaluationFailed
+
+                                  ┌──────────────┐
+                                  │   ACTIVITY   │
+                                  └──────────────┘
 
 CreateActivity()                  #Req:
                                   #  - only one with tags
@@ -283,6 +414,10 @@ DescribeActivity()                #Req:
 DeleteActivity()                  #Req:
                                   #Res:
 
+                                  ┌──────────┐
+                                  │   TASK   │
+                                  └──────────┘
+
 GetActivityTask()                 #Req:
                                   #Res:
 SendTaskSuccess()                 #Req:
@@ -292,6 +427,10 @@ SendTaskFailure()                 #Req:
 SendTaskHeartbeat()               #Req:
                                   #Res:
 
+                                  ┌─────────────┐
+                                  │   MAP RUN   │
+                                  └─────────────┘
+
 UpdateMapRun()                    #Req:
                                   #Res:
 ListMapRuns()                     #Req:
@@ -300,8 +439,24 @@ DescribeMapRun()                  #Req:
                                   #Res: MAP_RUN
 DescribeStateMachineForExecution()#Also returns mapRunArn (see above)
 
+EXEC.mapRunArn                    #'MAP_RUN_ARN'
+EXEC.itemCount                    #NUM
+
+                                  ┌───────────┐
+                                  │   STATE   │
+                                  └───────────┘
+
 TestState()                       #Req:
                                   #Res:
+
+AVAILABLE EVENT_TYPES ==>         #TaskStateEntered TaskStateExited TaskStateAborted
+                                  #SucceedStateEntered SucceedStateExited
+                                  #PassStateEntered PassStateExited
+                                  #ChoiceStateEntered ChoiceStateExited
+                                  #FailStateEntered
+                                  #ParallelStateEntered ParallelStateExited ParallelStateStarted ParallelStateSucceeded
+                                  #ParallelStateAborted ParallelStateFailed
+                                  #WaitStateEntered WaitStateExited WaitStateAborted
 
                                   ┌──────────┐
                                   │   TAGS   │
