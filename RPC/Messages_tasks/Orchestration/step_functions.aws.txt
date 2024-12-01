@@ -182,7 +182,7 @@ ValidateStateMachineDefinition()  #Req:
 
 VALIDATE_RES.result               #'OK' or 'FAIL'
 VALIDATE_RES.diagnostics          #DIAGNOSTIC_ARR
-DIAGNOSTIC.code                   #'CODE'
+DIAGNOSTIC.code                   #'ERROR_CODE'
 DIAGNOSTIC.message                #'MESSAGE'
 DIAGNOSTIC.severity               #'ERROR' (def) or 'WARNING'
 DIAGNOSTIC.location               #STR
@@ -595,39 +595,78 @@ MACHINE|ACTIVITY.tags             #TAG_PAIRS
                                   │   DEFINITION   │
                                   └────────────────┘
 
-DEFINITION                        #JSON
-DEFINITION.Version                #Always '1.0' (def)
-                                  #Only for top-level DEFINITION
+DEFINITION                        #'DMACHINE_JSON'
+D*                                #Fields in 'DMACHINE_JSON'
+DMACHINE.Version                  #Always '1.0' (def)
+                                  #Only for top-level MACHINE
 
-DEFINITION|STATE.Comment          #STR. Description
+DMACHINE|DSTATE.Comment           #STR. Description
+                                  #Only for top-level MACHINE
 
-DEFINITION.States.STATE           #STATE. Either a task or flow control
+DMACHINE.States.STATE             #DSTATE. Either a task or flow control
                                   #'STATE' name max 80 chars
-STATE.Type                        #'STATE_TYPE'
-STATE.*                           #STATE_TYPE-specific
+DSTATE.Type                       #'STATE_TYPE'
+DSTATE.*                          #STATE_TYPE-specific
 
-DEFINITION.StartAt                #'STATE'. First state
-STATE.Next                        #'STATE'. Next state
-TRANSITION ==>                    #STATE|CHOICE.Next
-STATE.End                         #BOOL (def: false). Whether last state
-                                  #Difference with SUCCEED_STATE is that it does not end nested DEFINITIONs???
-                                  #Not with CHOICE|SUCCEED|FAIL_STATE
-TERMINAL STATE ==>                #SUCCEED_STATE, FAIL_STATE or STATE.End true (top-level???)
+DMACHINE.StartAt                  #'STATE'. First state
 
-DEFINITION.TimeoutSeconds         #NUM (def: none). After NUMs, fail with ERROR 'States.Timeout'
+TRANSITION ==>                    #DSTATE|DCHOICE.Next
+                                  #Cannot target a 'STATE' in parent|child MACHINEs
+DSTATE.Next                       #'STATE'. Next state
 
-STATE.Retry                       #RETRY_ARR
-                                  #Only with TASK|PARALLEL|MAP_STATE
-RETRY.ErrorEquals                 #'ERROR'_ARR
-RETRY.IntervalSeconds             #NUM
-RETRY.MaxAttempts                 #NUM
-RETRY.BackoffRate                 #NUM
-RETRY.JitterStrategy              #STR
+TERMINAL STATE ==>                #Last STATE of a MACHINE, i.e. STATE_SUCCEED|FAIL or DSTATE.End true
+DSTATE.End                        #BOOL (def: false). Ends MACHINE successfully, but not parent ones
+                                  #Not with STATE_CHOICE|SUCCEED|FAIL
+DSTATE.Type                       #'Succeed'. STATE is STATE_SUCCEED
+                                  #End MACHINE successfully, but not parent ones
 
-STATE.Catch                       #CATCH_ARR
-                                  #Only with TASK|PARALLEL|MAP_STATE
-CATCH.ErrorEquals                 #'ERROR'_ARR
-CATCH.Next|Assign|Output          #Like STATE.*
+ERRORS ==>                        #STATEs can throw ERRORs
+                                  #In addition to ERRORs documented here, any STATE might fail due to network ERRORs
+                                  #ERRORs are propagated to parent STATE|MACHINEs
+                                  #When ERROR reaches top-level MACHINE, ends it with failure, using ERROR as OUTPUT
+ERROR_CODE                        #'States.*' reserved, i.e. should not use inside STATE_TASK
+
+DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
+                                  #End MACHINE with failure, including parent ones
+DSTATE.Error                      #'ERROR_CODE'[_DDPATH] (def: ???). OUTPUT.Error
+DSTATE.Cause                      #'MESSAGE'[_DDPATH] (def: none). OUTPUT.Cause
+
+DSTATE.Catch                      #DCATCH_ARR. Executes some logic on ERROR
+                                  #Only with STATE_TASK|PARALLEL|MAP
+DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
+                                  #Can be ['States.ALL'] to match any ERROR_CODE
+                                  #  - must be last DCATCH in DCATCH_ARR
+DCATCH.Next                       #Like DSTATE.*. Required
+DCATCH's INPUT ==>                #In first matching DCATCH: STATE's INPUT
+                                  #In next ones: previous matching DCATCH's OUTPUT
+DCATCH.Output                     #OUTPUT, which must include:
+                                  #  - OUTPUT.Error 'ERROR_CODE'
+                                  #  - OUTPUT.Cause 'MESSAGE'
+                                  #Def: current ERROR (not INPUT)
+DCATCH.Assign|ResultPath          #Like DSTATE.*
+
+DSTATE.Retry                      #DRETRY_ARR. Retry STATE if throws
+                                  #If a retry succeeds:
+                                  #  - STATE does not throw anymore
+                                  #  - CATCHs not run
+                                  #Def: no retry
+                                  #Only with STATE_TASK|PARALLEL|MAP
+DRETRY.ErrorEquals                #Same as DCATCH.ErrorEquals
+DRETRY.MaxAttempts                #NUM (def: 3). Max NUM of retries
+                                  #Can be 0 to not retry
+DRETRY.IntervalSeconds            #NUM (in secs, def: 1). Initial delay
+DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
+                                  #Does not decrease max NUM of retries
+DRETRY.BackoffRate                #NUM (def: 2). Multiplies delay after each retry
+DRETRY.JitterStrategy             #'NONE' (def) or 'FULL'. Applies random jitter to delay, which helps spread the load
+
+DMACHINE.TimeoutSeconds           #NUM (def: none). After NUMs, throw ERROR_CODE 'States.Timeout'
+                                  #Only for top-level MACHINE
+DSTATE_TASK.TimeoutSeconds        #NUM_DDPATH (in secs, def: 60).
+                                  #On timeout, throw ERROR_CODE 'States.Timeout'
+DSTATE_TASK.HeartbeatSeconds      #NUM_DDPATH (in secs, def: none). Heartbeat timeout, reset after each heartbeat
+                                  #On timeout, throw ERROR_CODE 'States.Timeout'
+                                  #Must be < TimeoutSeconds
 
 INPUT                             #'VAL_JSON' (def: '{}') passed to each STATE
                                   #INPUT to first STATE is set by caller, for a given EXEC
@@ -638,85 +677,142 @@ OUTPUT                            #'VAL_JSON' (def: INPUT) returned by each STAT
 CONTEXT                           #'OBJ_JSON' passed to each STATE
                                   #Set by caller, for a given EXEC
 
-STATE.Assign.SVAR                 #VAL. "State machine variable"
-                                  #Sets $VAR in any later STATE (not current STATE)
+DSTATE.Assign.DVAR                #VAL. "State machine variable"
+                                  #Sets $DVAR in any later STATE (not current STATE)
                                   #To use inside JSONPath|JSONata
-                                  #Cannot use $VAR in STATE.ResultPath
-                                  #Inner DEFINITIONs:
-                                  #  - have their own SVAR scope
-                                  #  - can use upper scope's SVARs, but not set them
-                                  #  - cannot use lower|sibling scopes' SVARs
-                                  #SVAR:
+                                  #Child DMACHINEs:
+                                  #  - have their own DVAR scope
+                                  #  - can use upper scope's DVARs, but not set them
+                                  #  - cannot use lower|sibling scopes' DVARs
+                                  #DVAR:
                                   #  - max 80 chars
                                   #  - ID_Continue: letters-like, numbers-like, _, diacretics, U+200C U+200D (zero-width space)
                                   #  - first char: ID_Start: letters-like
-                                  #Not with SUCCEED|FAIL_STATE
+                                  #Not with STATE_SUCCEED|FAIL
 
-DEFINITION|STATE.QueryLanguage    #'JSONPath' (def) or 'JSONata'
-                                  #If MAP|PARALLEL_STATE, not inherited by child STATEs
+DMACHINE|DSTATE.QueryLanguage     #'JSONPath' (def) or 'JSONata'
+                                  #Not inherited by child DMACHINEs
+                                  #Only for top-level MACHINE
 
 JSONPATH ==>                      #
-STATE.Parameters                  #SEXPR_OBJ. Passed as REQ to Lambda for TASK_STATE
-                                  #  - what about other PARALLEL|MAP|PASS_STATE???
-                                  #Only with TASK|PARALLEL|MAP|PASS_STATE
-STATE.ResultPath                  #Only with TASK|PARALLEL|MAP|PASS_STATE
-STATE.InputPath                   #Not with FAIL_STATE
-STATE.OutputPath                  #Not with FAIL_STATE
-STATE.ResultSelector              #SEXPR_OBJ
-                                  #Only with TASK|PARALLEL|MAP_STATE
-SVAR states                       #Always empty
-
-SEXPR                             #Either:
-                                  #  - '$...' or '$$...'
-                                  #     - fails with ERROR 'States.ParameterPathFailure' if no match
-                                  #  - 'IFUNC(...)'
-                                  #     - fails with ERROR 'States.IntrinsicFailure' if error
-                                  #Substituted by its result
-...[Path]                         #Means value is VAL[_SEXPR] but result must be a single value:
-                                  #  - JSONPath can only use .VAR [NUM]
-                                  #  - no * .. [...,...] [...:...:...]
-                                  #Also, cannot use IFUNC
-SEXPR_OBJ                         #OBJ where top|nested PROPs can be SEXPR
-                                  #  - must be declared with key 'PROP.$', which becomes 'PROP'
-
-$...                              #JSONPath (see its doc) using INPUT as input
+$...                              #JSONPath (see its doc) applied on INPUT (after transforming)
+                                  #Exception: applied on OUTPUT (after transforming) in *.Assign (except DSTATE_CHOICE|WAIT.Assign)
                                   #Cannot use [(EXPR)] and [?(EXPR)]
-$$...                             #JSONPath using CONTEXT as input
+                                  #Throws ERROR_CODE 'States.ParameterPathFailure' if no match
+$$...                             #JSONPath applied on CONTEXT
 
-IFUNC([ARG[_SEXPR],...])          #"Intrinsic function"
+DPATH                             #'$...' or '$$...'
+                                  #Substituted by its result, which can be any JSON type
+DDPATH                            #DPATH but result must be a single value
+                                  #Can only use .VAR [NUM]
+                                  #No * .. [...,...] [...:...:...]
+VAL[_DDPATH]                      #Means VAL can be a DDPATH, providing key is appended with 'Path'
+                                  #E.g. DSTATE_TASK.TimeoutSecondsPath NUM_DDPATH
+DEXPR                             #DPATH or 'DFUNC(...)'
+DEXPR_OBJ                         #OBJ where top|nested PROPs can be DEXPR
+                                  #To use DEXPR as value, key must be 'PROP.$', which becomes 'PROP'
+
+TRANSFORMS ==>                    #Each defaults to keeping INPUT|OUTPUT as is
+                                  #Order is InputPath -> Parameters and ResultSelector -> ResultPath -> OutputPath
+DSTATE.InputPath                  #DPATH. Transforms INPUT
+                                  #null sets INPUT as empty OBJ
+                                  #Not with STATE_FAIL
+DSTATE.Parameters                 #DEXPR_OBJ. Transforms INPUT
+                                  #Only with STATE_TASK|MAP|PARALLEL|PASS
+
+DSTATE.ResultSelector             #DEXPR_OBJ. Transforms OUTPUT
+                                  #Only with STATE_TASK|MAP|PARALLEL
+DSTATE.ResultPath                 #DDPATH. Sets OUTPUT as {...INPUT, DDPATH: OUTPUT}
+                                  #Overrides INPUT.DDPATH, does not merge to it
+                                  #null sets OUTPUT as {...INPUT}
+                                  #Cannot use CONTEXT nor $DVAR
+                                  #Only with STATE_TASK|MAP|PARALLEL|PASS
+DSTATE.OutputPath                 #DPATH. Transforms OUTPUT
+                                  #null sets OUTPUT as empty OBJ
+                                  #Not with STATE_FAIL
+
+DVAR states                       #Always empty
+
+JSONATA ==>                       #
+DSTATE.Output                     #Not with STATE_FAIL
+DSTATE.Arguments                  #Only with STATE_TASK|PARALLEL|MAP
+DVAR states                       #
+
+DFUNC([ARG[_DEXPR],...])          #"Intrinsic function"
                                   #ARG can be '-quoted STR, NUM or null
                                   #Must \-escape ' { } \
-States.*                          #Available IFUNCs, among the following
+                                  #Throws ERROR_CODE 'States.IntrinsicFailure' if error
+States.*                          #Available DFUNCs, among the following
 Format(STR, VAL,...)              #STR but replaces any {} with each VAL
                                   #VAL must be STR|NUM|BOOL|null, not OBJ|ARR
 UUID()                            #'UUIDv4'
 
-JSONATA ==>                       #
-STATE.Output                      #Not with FAIL_STATE
-STATE.Arguments                   #Only with TASK|PARALLEL|MAP_STATE
-SVAR states                       #
+DSTATE.Type                       #'Pass'. STATE is STATE_PASS
+                                  #Noop. Only meant for setting OUTPUT and DVARs
+DSTATE_PASS.Result                #OUTPUT (def: INPUT)
+                                  #Cannot use DEXPR|DFUNCs
 
-STATE.Type                        #'Succeed'. End successfully
+DSTATE.Type                       #'Choice'. STATE is STATE_CHOICE
+                                  #Like a `switch` statement
+DSTATE_CHOICE.Default             #'STATE'
+                                  #Def: throw ERROR_CODE 'States.NoChoiceMatched'
+DSTATE_CHOICE.Choices             #DCHOICE_ARR
+                                  #Cannot be empty
+DCHOICE.Next                      #Like DSTATE.*. Required
+DCHOICE.Assign                    #Like DSTATE.*
+                                  #DSTATE_CHOICE.Assign is not used if any DCHOICE matches (even if it has no DCHOICE.Assign)
 
-STATE.Type                        #'Fail'. End with failure
+DCHOICE.*                         #DCOND, i.e. condition deciding whether to pick DCHOICE
+DCHOICE.Variable                  #DPATH. VAL to compare
 
-STATE.Type                        #'Choice'. Like a `switch` statement
-CHOICE_STATE.Default              #'STATE'
-CHOICE_STATE.Choices              #CHOICE_ARR
-CHOICE.Next|Assign                #Like STATE.*
+DCOND.Not                         #DCOND2
+DCOND.And|Or                      #DCOND_ARR
+                                  #Cannot be empty
 
-STATE.Type                        #'Pass'. Noop. I.e. only meant for setting SVARs, OUTPUT, parameters or result
+DCOND.IsPresent                   #BOOL. VAL !== undefined
+DCOND.IsNull                      #BOOL. VAL === null
 
-STATE.Type                        #'Map'
-MAP_STATE.ItemProcessor           #DEFINITION
-MAP_STATE.MaxConcurrency          #NUM
+DCOND.IsBoolean                   #BOOL. VAL is a BOOL
+DCOND.BooleanEquals               #BOOL[_DPATH]. VAL === BOOL
 
-STATE.Type                        #'Parallel'
-PARALLEL_STATE.Branches           #DEFINITION_ARR
+DCOND.IsNumeric                   #BOOL. VAL is a NUM
+DCOND.NumericEquals               #NUM[_DPATH]. VAL === NUM
+DCOND
+ .NumericLess|GreaterThan[Equals] #NUM[_DPATH]. VAL < <= > >= NUM
 
-STATE.Type                        #'Wait'
+DCOND.IsString                    #BOOL. VAL is a STR
+DCOND.StringEquals                #STR[_DPATH]. VAL === STR
+DCOND.StringMatches               #'GLOB'. VAL matches GLOB
+                                  #GLOB can only use *
+                                  #Must \-escape * \
+DCOND
+ .StringLess|GreaterThan[Equals]  #STR[_DPATH]. VAL < <= > >= STR
 
-STATE.Type                        #'Task'. Run a Lambda FUNCTION
-                                  #REQ is INPUT
-                                  #RES is OUTPUT
-TASK_TYPE.Resource                #'FUNC_ARN'
+DCOND.IsTimestamp                 #BOOL. VAL is a DATE
+DCOND.TimestampEquals             #'DATE'[_DPATH]. VAL === DATE
+DCOND
+.TimestampLess|GreaterThan[Equals]#'DATE'[_DPATH]. VAL < <= > >= DATE
+
+DSTATE.Type                       #'Map'. STATE is STATE_MAP
+DSTATE_MAP.ItemProcessor          #Child DMACHINE
+DSTATE_MAP.MaxConcurrency         #NUM
+
+DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
+                                  #Executes multiple child MACHINEs in parallel
+                                  #Each uses current INPUT
+                                  #OUTPUT is ARR of their OUTPUTs
+                                  #If any child MACHINE throws, other childs are terminated
+DSTATE_PARALLEL.Branches          #DMACHINE_ARR
+
+DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
+                                  #Wait for a specific duration
+DSTATE_WAIT.Timestamp             #'DATE'[_DDPATH]
+DSTATE_WAIT.Seconds               #NUM[_DDPATH]. Alternative to Timestamp
+
+DSTATE.Type                       #'Task'. STATE is STATE_TASK
+                                  #Might throw
+DSTATE_TASK.Resource              #'ARN'. Can be:
+                                  #  - 'TASK_ARN'
+                                  #  - 'FUNC_ARN': run Lambda FUNCTION, with INPUT|OUTPUT as REQ|RES
+DSTATE_TASK.Credentials           #DCREDS, as DEXPR_OBJ
+DCREDS.RoleArn                    #'ROLE_ARN' assumed by Resource
