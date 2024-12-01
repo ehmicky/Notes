@@ -585,87 +585,34 @@ ICQUEUE
  .metricNumberOfEmptyReceives
  ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
 
-                                  ┌──────────────┐
-                                  │   TIMELINE   │
-                                  └──────────────┘
+                                  ┌───────────────┐
+                                  │   RETENTION   │
+                                  └───────────────┘
 
 QUEUE_ATTRS                       #NUM of MESSAGEs "stored", i.e. not received yet
  .ApproximateNumberOfMessages     #No limits
 
-QUEUE_ATTRS.DelaySeconds          #NUM (in secs, def: 0, max: 15m)
-                                  #Period after MESSAGE sending when MESSAGE cannot be received
-MESSAGE_SEND.DelaySeconds         #Same for individual MESSAGE
-                                  #Not with FIFO QUEUEs
-QUEUE_ATTRS.Approximate
- NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
-
-QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for receivers to process a MESSAGE
- |MESSAGE_VSB.VisibilityTimeout   #I.e. like a processing lock
-                                  #Period starts when MESSAGE is received
-                                  #During that time, MESSAGE cannot be received again ("in-flight")
-                                  #  - i.e. if too low, risk of multiple receivers receiving same MESSAGE
-                                  #Once processed, MESSAGE must be deleted
-                                  #Else, MESSAGE reception is considered failed ("poison pill")
-                                  #  - i.e. can only retry once VisibilityTimeout passed
-                                  #  - i.e. if too high, slows down retrying failed consumption
-                                  #Can increase processing time with ChangeMessageVisibility()
-                                  #  - it sets VisibilityTimeout from the time it is called
-                                  #Can set to 0 to force timeout
-                                  #With FIFO, the whole MESSAGE_GROUP is locked instead, not just the MESSAGE
-                                  #If some MESSAGEs have different VisibilityTimeout
-                                  #  - prefer using multiple QUEUEs with different VisibilityTimeout
-                                  #  - instead of setting MESSAGES_RCV.VisibilityTimeout
-                                  #  - reason: more uniform flow|metrics for each QUEUE
-QUEUE_ATTRS.Approximate           #NUM of in-flight MESSAGEs
- NumberOfMessagesNotVisible       #Max 12e4 (soft) if non-FIFO, 2e4 (hard) if FIFO
-
-PREFETCHING ==>                   #Receiver can prefetch|buffer MESSAGEs
-                                  #Pro: reduces latency
-                                  #Con: must increase VisibilityTimeout so prefetched MESSAGEs do not fail
-
-SYS_ATTRS.ApproximateReceiveCount #NUM of times this MESSAGE failed
-
 QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   #Delete MESSAGEs older than NUMs
-                                  #Updates impact existing MESSAGEs, and take up to 15m
+                                  #When updating:
+                                  #  - take up to 15m
+                                  #  - might delete existing MESSAGEs, if under the threshold
                                   #Based on SYS_ATTRS.SentTimestamp
                                   #  - i.e. if DLQ + non-FIFO, includes time spent in source QUEUE
                                   #     - i.e. MessageRetentionPeriod should be > source QUEUE's, to avoid risk of expiring right away
+                                  #Does not impact pricing since storage is free
 
-PRICING ==>                       #None of the above impact pricing since storage is free
+                                  ┌───────────────────┐
+                                  │   RETENTION IAC   │
+                                  └───────────────────┘
 
-                                  ┌──────────────────┐
-                                  │   TIMELINE API   │
-                                  └──────────────────┘
+AWS::SQS::Queue                   #Includes RESPROPs: MessageRetentionPeriod
 
-ChangeMessageVisibility()         #Req: MESSAGE_VSB
-                                  #Res: empty
-
-                                  ┌──────────────────┐
-                                  │   TIMELINE IAC   │
-                                  └──────────────────┘
-
-AWS::SQS::Queue                   #Includes RESPROPs: DelaySeconds, VisibilityTimeout, MessageRetentionPeriod
-
-CQUEUE_OPTS.deliveryDelay         #DURATION. QUEUE_ATTRS.DelaySeconds
-CQUEUE_OPTS.visibilityTimeout     #DURATION. QUEUE_ATTRS.*
 CQUEUE_OPTS.retentionPeriod       #DURATION. QUEUE_ATTRS.MessageRetentionPeriod
 
-                                  ┌──────────────────────┐
-                                  │   TIMELINE METRICS   │
-                                  └──────────────────────┘
-
-AWS/SQS/Approximate
- NumberOfMessagesDelayed          #QUEUE_ATTRS.ApproximateNumberOfMessagesDelayed
-AWS/SQS/Approximate
- NumberOfMessagesNotVisible       #QUEUE_ATTRS.ApproximateNumberOfMessagesNotVisible
-AWS/SQS/Approximate               #QUEUE_ATTRS.ApproximateNumberOfMessages - QUEUE_ATTRS.ApproximateNumberOfMessagesNotVisible
- NumberOfMessagesVisible          #cdk-monitoring-constructs:
-                                  #  - max: METRIC, summary WIDGET, MALARM QueueMin|MaxSize <|> CXALARM_OPTS.min|maxMessageCount
-                                  #  - draining rate (in secs):
-                                  #     - METRIC, summary WIDGET, MALARM QueueMaxTimeToDrainMessages > CXALARM_OPTS.maxTimeToDrain
-                                  #     - estimated duration to have 0 MESSAGEs stored
-                                  #     - comparing NUM of MESSAGEs stored vs rate of MESSAGE_SENDs / MESSAGE_DELETEs
+                                  ┌───────────────────────┐
+                                  │   RETENTION METRICS   │
+                                  └───────────────────────┘
 
 AWS/SQS/                          #Age (NUM of seconds) of oldest MESSAGE
  ApproximateAgeOfOldestMessage    #If not FIFO, MESSAGEs that are retried 3+ times have their age reset
@@ -674,23 +621,148 @@ AWS/SQS/                          #Age (NUM of seconds) of oldest MESSAGE
                                   #cdk-monitoring-constructs:
                                   #  - max: METRIC, summary WIDGET, MALARM QueueMaxMessageAge > CXALARM_OPTS.maxAgeInSeconds
 
-                                  ┌──────────────────────┐
-                                  │   TIMELINE METRICS   │
-                                  └──────────────────────┘
+                                  ┌───────────────────────────┐
+                                  │   RETENTION METRICS IAC   │
+                                  └───────────────────────────┘
 
-
-ICQUEUE.metricApproximateNumberOf
- MessagesDelayed
- |ApproximateNumberOf
- Messages[Not]Visible
- |ApproximateAgeOfOldestMessage
+ICQUEUE
+ .ApproximateAgeOfOldestMessage
  ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Maximum'
 
-                                  ┌───────────────────┐
-                                  │   TIMELINE LINT   │
-                                  └───────────────────┘
+                                  ┌────────────────────┐
+                                  │   RETENTION LINT   │
+                                  └────────────────────┘
 
 cfn-lint I3013                    #Must explicitely set QUEUE_ATTRS.MessageRetentionPeriod
+
+                                  ┌───────────┐
+                                  │   DELAY   │
+                                  └───────────┘
+
+QUEUE_ATTRS.DelaySeconds          #NUM (in secs, def: 0, max: 15m)
+                                  #Period after MESSAGE sending when MESSAGE cannot be received
+MESSAGE_SEND.DelaySeconds         #Same for individual MESSAGE
+                                  #Not with FIFO QUEUEs
+QUEUE_ATTRS.Approximate
+ NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
+
+                                  ┌───────────────┐
+                                  │   DELAY IAC   │
+                                  └───────────────┘
+
+AWS::SQS::Queue                   #Includes RESPROPs: DelaySeconds
+
+CQUEUE_OPTS.deliveryDelay         #DURATION. QUEUE_ATTRS.DelaySeconds
+
+                                  ┌───────────────────┐
+                                  │   DELAY METRICS   │
+                                  └───────────────────┘
+
+AWS/SQS/Approximate
+ NumberOfMessagesDelayed          #QUEUE_ATTRS.ApproximateNumberOfMessagesDelayed
+
+                                  ┌───────────────────────┐
+                                  │   DELAY METRICS IAC   │
+                                  └───────────────────────┘
+
+ICQUEUE.metricApproximateNumberOf
+ MessagesDelayed([CMETRIC_OPTS])
+ ->CMETRIC                        #Uses statistic 'Maximum'
+
+                                  ┌────────────────┐
+                                  │   VISIBILITY   │
+                                  └────────────────┘
+
+QUEUE_ATTRS|MESSAGES_RCV          #NUM (min 0, def 30s, max 12h)
+ |MESSAGE_VSB.VisibilityTimeout   #Locks MESSAGE for NUM secs after each ReceiveMessage()
+                                  #I.e. any other ReceiveMessage() fails
+                                  #Must be > duration to process the MESSAGE
+                                  #Used on both first ReceiveMessage() and any retry
+
+IN-FLIGHT MESSAGE ==>             #MESSAGE under VisibilityTimeout lock
+                                  #This prevents multiple receivers receiving same MESSAGE
+                                  #I.e. if VisibilityTimeout too low, risk of double processing
+QUEUE_ATTRS.Approximate           #NUM of in-flight MESSAGEs
+ NumberOfMessagesNotVisible       #Max 12e4 (soft) if non-FIFO, 2e4 (hard) if FIFO
+
+PROCESSING SUCCESS ==>            #Must call DeleteMessage() to acknowledge success
+
+PROCESSING EXTENSION ==>          #Can increase processing time with ChangeMessageVisibility()
+                                  #It sets VisibilityTimeout from the time it is called
+                                  #E.g. using the same VisibilityTimeout restarts it
+
+PROCESSING TIMEOUT ==>            #When VisibilityTimeout reached before DeleteMessage()
+                                  #MESSAGE is considered failed ("poison pill")
+                                  #Can then retry ReceiveMessage() right away
+
+PROCESSING FAILURE ==>            #If processing failed (i.e. before VisibilityTimeout), should ChangeMessageVisibility()
+                                  #This sets the min duration before next retry
+                                  #Can be 0 to allow retries right away
+                                  #Recommended, else the VisibilityTimeout left would be used instead
+                                  #  - would depend on time spent before processing failed
+                                  #  - i.e. might not be the most optimal duration to retry
+                                  #I.e. if VisibilityTimeout too high, it slows down retries when ChangeMessageVisibility() could not be called
+                                  #  - e.g. due to unknown errors|bugs
+SYS_ATTRS.ApproximateReceiveCount #NUM of times this MESSAGE failed
+
+HEARTBEAT ==>                     #Calling ChangeMessageVisibility() at regular intervals
+                                  #Typically using same VisibilityTimeout, and at frequency a little lower than VisibilityTimeout
+                                  #Pros:
+                                  #  - allows VisibilityTimeout to be short, i.e. fast retry on unknown error|bug
+                                  #  - without impacting max processing time
+                                  #Cons:
+                                  #  - cost of additional ChangeVisibilityTimeout() calls
+                                  #  - requires separate logic for processing timeout
+                                  #     - which would then call ChangeVisibilityTimeout() with 0
+
+FIFO ==>                          #The whole MESSAGE_GROUP is locked instead, not just the MESSAGE
+
+PREFETCHING ==>                   #Receiver can prefetch|buffer MESSAGEs
+                                  #Pro: reduces latency
+                                  #Con: must increase VisibilityTimeout so prefetched MESSAGEs do not fail
+
+DIFFERENT VISIBILITY TIMEOUTS ==> #Some MESSAGEs might have different optimal VisibilityTimeout than others
+                                  #Then it is recommended to use multiple QUEUEs with different VisibilityTimeout
+                                  #As opposed to setting MESSAGES_RCV.VisibilityTimeout
+                                  #Reason: more uniform flow|metrics for each QUEUE
+
+                                  ┌────────────────────┐
+                                  │   VISIBILITY API   │
+                                  └────────────────────┘
+
+ChangeMessageVisibility()         #Req: MESSAGE_VSB
+                                  #Res: empty
+
+                                  ┌────────────────────┐
+                                  │   VISIBILITY IAC   │
+                                  └────────────────────┘
+
+AWS::SQS::Queue                   #Includes RESPROPs: VisibilityTimeout
+
+CQUEUE_OPTS.visibilityTimeout     #DURATION. QUEUE_ATTRS.VisibillityTimeout
+
+                                  ┌────────────────────────┐
+                                  │   VISIBILITY METRICS   │
+                                  └────────────────────────┘
+
+AWS/SQS/Approximate
+ NumberOfMessagesNotVisible       #QUEUE_ATTRS.ApproximateNumberOfMessagesNotVisible
+
+AWS/SQS/Approximate               #QUEUE_ATTRS.ApproximateNumberOfMessages - QUEUE_ATTRS.ApproximateNumberOfMessagesNotVisible
+ NumberOfMessagesVisible          #cdk-monitoring-constructs:
+                                  #  - max: METRIC, summary WIDGET, MALARM QueueMin|MaxSize <|> CXALARM_OPTS.min|maxMessageCount
+                                  #  - draining rate (in secs):
+                                  #     - METRIC, summary WIDGET, MALARM QueueMaxTimeToDrainMessages > CXALARM_OPTS.maxTimeToDrain
+                                  #     - estimated duration to have 0 MESSAGEs stored
+                                  #     - comparing NUM of MESSAGEs stored vs rate of MESSAGE_SENDs / MESSAGE_DELETEs
+
+                                  ┌────────────────────────────┐
+                                  │   VISIBILITY METRICS IAC   │
+                                  └────────────────────────────┘
+
+ICQUEUE.ApproximateNumberOf
+ Messages[Not]Visible
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Maximum'
 
                                   ┌─────────────────┐
                                   │   DEAD-LETTER   │
@@ -1114,12 +1186,16 @@ EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN (FIFO or not)
                                   #     - only if SSE-KMS or no encryption (not SSE-SQS)
 EVENT_SOURCE.*                    #See Lambda doc
 
-EVENT_SOURCE.BatchSize            #NUM. MESSAGES_RCV.MaxNumberOfMessages
+EVENT_SOURCE.BatchSize            #NUM. Like MESSAGES_RCV.MaxNumberOfMessages except:
+                                  #  - exact: does not return fewer
+                                  #  - actually does multiple ReceiveMessage()
+                                  #     - i.e. VisibilityTimeout starts while polling, not processing
                                   #Def: 10
                                   #Max: 10 (if FIFO) or 1e4 (if non-FIFO)
 
-EVENT_SOURCE                      #NUM (in secs). MESSAGES_RCV.WaitTimeSeconds
- .MaximumBatchingWindowInSeconds  #Def|min:
+EVENT_SOURCE                      #NUM (in secs). Maximum duration to gather records for each batch
+ .MaximumBatchingWindowInSeconds  #Note: MESSAGES_RCV.WaitTimeSeconds uses default from QUEUE_ATTRS.ReceiveMessageWaitTimeSeconds
+                                  #Def|min:
                                   #  - if BatchSize <= 10: 0, no long polling
                                   #  - else: 1
                                   #Max: 5m
@@ -1132,6 +1208,8 @@ EVENT_SOURCE.FilterCriteria       #Filters against LMESSAGE
                                   #LMESSAGE.body is OBJ (not 'OBJ_JSON') if valid JSON, else STR
 
 QUEUE_ATTRS.VisibilityTimeout     #Recommended value: FUNC_VERSION.Timeout * (REDRIVE_POLICY.maxReceiveCount + 1) + MaximumBatchingWindowInSeconds
+
+sqs-consumer                      #Alternative for long-runner instances. See its doc
 
                                   ┌─────────────────┐
                                   │   LAMBDA AUTH   │

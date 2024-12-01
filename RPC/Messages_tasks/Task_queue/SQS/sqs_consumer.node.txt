@@ -3,7 +3,23 @@
                                   ┃   SQS_CONSUMER   ┃
                                   ┗━━━━━━━━━━━━━━━━━━┛
 
+ALTERNATIVES ==>                  #  - Lamdba EVENT_SOURCE for SQS (preferred)
+                                  #     - for serverless
+                                  #     - processes multiple ReceiveMessage() at once
+                                  #     - basic filtering
+                                  #     - partial batch
+                                  #     - CloudWatch METRICs
+                                  #  - sqs-consumer (preferred if long-running instances)
+                                  #     - for long-running instances
+                                  #     - processes one ReceiveMessage() at a time
+                                  #     - advanced filtering
+                                  #     - partial batch
+
 VERSION ==>                       #1.2.0
+
+                                  ┌──────────┐
+                                  │   INIT   │
+                                  └──────────┘
 
 Consumer.create(OPTS)->CONSUMER   #Is an EVENTEMITTER
 
@@ -11,16 +27,33 @@ CONSUMER.updateOption('VAR', VAL) #Sets OPTS.VAR = VAL
 CONSUMER.on('option_updated',
  FUNC('VAR', VAL))                #
 
+OPTS.sqs                          #SQS CLIENT (def: created)
+OPTS.*                            #COPTS. Only used with the automatically created|default CLIENT
+
+DEBUG=sqs-consumer                #Logs events, lifecycle (start|poll|stop), auth ERRORs, MESSAGEs deletes
+
+                                  ┌───────────┐
+                                  │   START   │
+                                  └───────────┘
+
 CONSUMER.start()                  #Repeatedly calls ReceiveMessage()
-                                  #On exceptions|timeouts, emits '*error' on CONSUMER, but continues repetition
 CONSUMER.on('started', FUNC())    #
-OPTS.pollingWaitTimeMs            #NUM (in ms, def: 0). How long to wait after ReceiveMessage() ended to call it again
-OPTS.authenticationErrorTimeout   #NUM (in ms, def: 10s). Same but when ReceiveMessage() failed due to
-                                  #network error, auth error, throttling or QUEUE not existing yet
+
+OPTS.pollingWaitTimeMs            #NUM (in ms, def: 0). How long to wait after ReceiveMessage() ends to call it again
+
+CONSUMER.status()->OBJ            #
+OBJ.isPolling                     #BOOL. Whether some API call or OPTS.*Callback|handleMessage[Batch]() is ongoing
+                                  #As opposed to being in-between calls, due to OPTS.pollingWaitTimeMs|authenticationErrorTimeout
+OBJ.isRunning                     #BOOL. Based on CONSUMER.start|stop()
+
+                                  ┌──────────┐
+                                  │   STOP   │
+                                  └──────────┘
 
 CONSUMER.stop()                   #
 CONSUMER.on('stopped', FUNC())    #On CONSUMER.stop() end
-OPTS.pollingCompleteWaitTimeMs    #NUM. Unless 0 (def), make CONSUMER.stop() wait for any ongoing ReceiveMessage()
+
+OPTS.pollingCompleteWaitTimeMs    #NUM. Unless 0 (def), make CONSUMER.stop() wait for any ongoing API call or OPTS.*Callback|handleMessage[Batch]()
                                   #Times out after NUMms
 CONSUMER.on('waiting_for_polling_
  to_complete_timeout_exceeded',
@@ -31,59 +64,91 @@ CONSUMER.abortController          #ABORT_CONTROLLER automatically created
 OPTS.abort                        #BOOL (def: false). ABORT_CONTROLLER.abort() on CONSUMER.stop()
 CONSUMER.on('aborted', FUNC())    #On CONSUMER.stop() start, only if OPTS.abort true
 
-CONSUMER.status()->OBJ            #
-OBJ.isPolling                     #BOOL. Whether some API call or OPTS.*Callback|handleMessage[Batch]() is ongoing
-                                  #As opposed to being in-between calls, due to OPTS.pollingWaitTimeMs|authenticationErrorTimeout
-OBJ.isRunning                     #BOOL. Based on CONSUMER.start|stop()
+                                  ┌─────────────┐
+                                  │   RECEIVE   │
+                                  └─────────────┘
 
 OPTS.queueUrl                     #'QUEUE_URL'
+
 OPTS.*                            #MESSAGE_RCV.* except:
                                   #  - no ReceiveRequestAttemptId
                                   #  - MaxNumberOfMessages (def: 10) -> batchSize (def: 1)
                                   #  - WaitTimeSeconds (def: 0) -> waitTimeSeconds (def: 20)
                                   #  - camelcase'd
+
 OPTS.preReceiveMessageCallback    #FUNC()[->>] called before each ReceiveMessage()
 OPTS.postReceiveMessageCallback   #FUNC()[->>] called after each ReceiveMessage()
+
 CONSUMER.on('message_received',
  FUNC(MESSAGE_RCV_RES))           #After each MESSAGE from ReceiveMessage()
 CONSUMER.on('empty', FUNC())      #After each ReceiveMessage() with no MESSAGEs
 
+                                  ┌─────────────┐
+                                  │   PROCESS   │
+                                  └─────────────┘
+
 OPTS.handleMessage                #FUNC(MESSAGE_RCV_RES)[->>MESSAGE_RCV_RES] called with each MESSAGE from ReceiveMessage()
-                                  #Run in parallel, per ReceiveMessage()
+                                  #Each batch returned by ReceiveMessage() in parallel
+                                  #Con: additional API calls cost
+
 OPTS.handleMessageBatch           #FUNC(MESSAGE_RCV_RES_ARR)[->>MESSAGE_RCV_RES_ARR] called after ReceiveMessage()
                                   #Only if >=1 MESSAGEs
-CONSUMER.on('processing_error',
- FUNC(ERROR, MESSAGE_RCV_RES))    #On OPTS.handleMessage[Batch]() exception
+                                  #Cons:
+                                  #  - cannot use OPTS.handleMessageTimeout
+                                  #  - cannot use OPTS.terminateVisibilityTimeout for individual MESSAGE failure,
+                                  #    since should omit from returned MESSAGE_RCV_RES_ARR instead
 
 OPTS.handleMessageTimeout         #NUM (def: none). Timeout for OPTS.handleMessage()->>
-                                  #If OPTS.handleMessageBatch, not used
-CONSUMER.on('timeout_error',
- FUNC(ERROR, MESSAGE_RCV_RES))    #On OPTS.handleMessageTimeout
+
+                                  ┌─────────────┐
+                                  │   SUCCESS   │
+                                  └─────────────┘
 
 OPTS.shouldDeleteMessages         #BOOL. If true (def), calls DeleteMessage() after every successful OPTS.handleMessage()
                                   #If OPTS.handleMessageBatch, uses DeleteMessageBatch() instead
+
 OPTS.alwaysAcknowledge            #BOOL. If false (def):
                                   #  - if OPTS.handleMessage() returns empty OBJ: no DeleteMessage()
                                   #  - if OPTS.handleMessageBatch() returns ARR: DeleteMessage() only on those
+                                  #I.e. if false, like "partial batch" of Lambda EVENT_SOURCE
+
 CONSUMER.on('message_processed',
  FUNC(MESSAGE_RCV_RES))           #After each MESSAGE deleted by DeleteMessage[Batch]()
+
+                                  ┌────────────────┐
+                                  │   VISIBILITY   │
+                                  └────────────────┘
 
 OPTS.heartbeatInterval            #NUM (def: none)
                                   #Calls ChangeMessageVisibility() every NUM secs, while OPTS.handleMessage() and DeleteMessage() are running
                                   #If OPTS.handleMessageBatch, uses ChangeMessageVisibilityBatch() instead
-                                  #Uses same VisibilityTimeout as ReceiveMessage(), i.e. just resets it, preventing VisibilityTimeout to ever be reached
+                                  #Uses same VisibilityTimeout as ReceiveMessage()
                                   #NUM must be < VisibilityTimeout
-OPTS.terminateVisibilityTimeout   #false (def), true (same as 0) or NUM
-                                  #Calls ChangeMessageVisibility[Batch]() with VisibilityTimeout NUM on exception of
-                                  #OPTS.handleMessage[Batch](), OPTS.handleMessageTimeout or DeleteMessage[Batch]()
-                                  #I.e. force timeout on failed MESSAGE
 
-OPTS.sqs                          #SQS CLIENT (def: created)
-OPTS.*                            #COPTS. Only used with the automatically created|default CLIENT
+OPTS.terminateVisibilityTimeout   #false (def), true (same as 0) or NUM
+                                  #Calls ChangeMessageVisibility[Batch]() with VisibilityTimeout NUM on any exception from
+                                  #OPTS.handleMessage[Batch](), OPTS.handleMessageTimeout or DeleteMessage[Batch]()
+                                  #I.e. notifies MESSAGE failure
+
+                                  ┌───────────┐
+                                  │   ERROR   │
+                                  └───────────┘
+
+OPTS.authenticationErrorTimeout   #NUM (def: 10s). On network error, auth error, throttling or QUEUE not existing yet,
+                                  #wait NUMms before calling ReceiveMessage() again
+
+ERRORS ==>                        #Do not propagate exceptions nor call CONSUMER.stop()
+                                  #Instead, just emit following events
+
 CONSUMER.on
  ('error', FUNC(SQS_ERROR))       #On ReceiveMessage() AWS_ERROR or OPTS.*Callback exception
+CONSUMER.on('processing_error',
+ FUNC(ERROR, MESSAGE_RCV_RES))    #On OPTS.handleMessage[Batch]() exception
+CONSUMER.on('timeout_error',
+ FUNC(ERROR, MESSAGE_RCV_RES))    #On OPTS.handleMessageTimeout
 CONSUMER.on('error',
- FUNC(SQS_ERROR, MESSAGE_RCV_RES))#On ChangeVisibilityTimeout[Batch]|DeleteMessage[Batch]() AWS_ERROR
+ FUNC(SQS_ERROR, MESSAGE_RCV_RES))#On DeleteMessage[Batch]|ChangeVisibilityTimeout[Batch]() AWS_ERROR
+
 SQS_ERROR.name                    #'SQSError'
 SQS_ERROR.time                    #Current DATE
 SQS_ERROR.code                    #AWS_ERROR.name
@@ -91,8 +156,7 @@ SQS_ERROR.statusCode              #METADATA.httpStatusCode
 SQS_ERROR.service                 #AWS_ERROR.$service
 SQS_ERROR.fault                   #AWS_ERROR.$fault
 SQS_ERROR.retryable               #AWS_ERROR.$retryable.throttling
+
+OPTS.extendedAWSErrors            #BOOL. If false (def), no SQS_ERROR.response|metadata
 SQS_ERROR.response                #AWS_ERROR.$response
 SQS_ERROR.metadata                #AWS_ERROR.$metadata
-OPTS.extendedAWSErrors            #BOOL. If false (def), no SQS_ERROR.response|metadata
-
-DEBUG=sqs-consumer                #Logs EVENTs, lifecycle (start|poll|stop), auth ERRORs, MESSAGEs deletes
