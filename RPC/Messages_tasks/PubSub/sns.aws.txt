@@ -7,9 +7,6 @@ VERSION ==>                       #2024-09-24
 
 TODO:
   - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
-     - Mobile text messaging
-        - Stopped at: Configurations > Sending SMS messages
-     - Sending mobile push nofitications
      - Best practices
      - Code examples
   - https://aws.amazon.com/sns/faqs
@@ -482,7 +479,7 @@ MESSAGE THROTTLING ==>            #Max MESSAGEs per second to each TOPIC
 
 DELIVERY_POLICY.throttlePolicy    #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
  .maxReceivesPerSecond            #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
-                                  #  - dropped after 1h???
+                                  #  - dropped after 1h
 
                                   ┌──────────────────┐
                                   │   THROTTLE IAC   │
@@ -610,7 +607,6 @@ LRES.attempts                     #NUM of retry attempts
 
 SUB_ATTRS.RedrivePolicy           #'REDRIVE_POLICY_JSON'. Sends failed NOTIFICATIONs to SQS DLQ
                                   #For both client|server-side errors
-                                  #Not with SMS???
 
 REDRIVE_POLICY.deadLetterTargetArn#'QUEUE_ARN'
                                   #Must have same ACCOUNT|REGION as SUB
@@ -950,7 +946,7 @@ SMS_ATTRS.DeliveryStatusIAMRole
 |DeliveryStatusSuccessSamplingRate#Same for SMS
 
 sns/REGION/ACCOUNT_ID/TOPIC       #'LOG_GROUP' on success|failure
- [/Failure]                       #With SMS direct push, TOPIC is 'DirectPublishToPhoneNumber'
+ [/Failure]                       #With SMS direct publish, TOPIC is 'DirectPublishToPhoneNumber'
 
 LPAYLOAD                          #JSON LMESSAGE used in logs
 LPAYLOAD.status                   #'SUCCESS|FAILURE'
@@ -1664,7 +1660,7 @@ SUB.Endpoint                      #'PHONE_NUMBER'
                                   #E.164 format, i.e. use + followed by multiple digits
 
 MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
-                                  #"Direct push": send a MESSAGE without using a TOPIC
+                                  #"Direct publish": send a MESSAGE without using a TOPIC
                                   #Pros:
                                   #  - cheaper
                                   #  - faster
@@ -1891,30 +1887,28 @@ SUB.Protocol                      #'application'. Send as a mobile|desktop push 
 SUB.Endpoint
 PUSH_ENDPOINT.EndpointArn         #'PUSH_ENDPOINT_ARN'
 MESSAGE.TargetArn                 #'PUSH_ENDPOINT_ARN', specified instead of MESSAGE.TopicArn
-                                  #"Direct push": like SMS (see above)
-PUSH_ENDPOINT.Attributes          #PUSH_ENDPOINT_ATTRS
-
-SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
-
-SUB_CONFIRM                       #Not used
+                                  #"Direct publish": like SMS (see above)
 
 PUSH_ENDPOINT                     #Mobile device
                                   #Creating is idempotent
+                                  #To handle re-installation should check if PUSH_ENDPOINT already exists before either:
+                                  #  - creating it
+                                  #  - sending any push
+PUSH_ENDPOINT.Attributes          #PUSH_ENDPOINT_ATTRS
 
-PUSH_ENDPOINT_ATTRS.Enabled       #BOOL. False until 'PUSH_TOKEN' set
-PUSH_ENDPOINT.Token               #'PUSH_TOKEN'
-
-PUSH_ENDPOINT.CustomUserData      #STR. Arbitrary data???
-                                  #Max 2KB
-
-PUSH_PLATFORM_ATTRS
- .EventEndpointCreated            #'TOPIC_ARN'. Send MESSAGEs on CreatePlatformEndpoint()
-PUSH_PLATFORM_ATTRS
- .EventEndpointUpdated            #'TOPIC_ARN'. Send MESSAGEs on SetEndpointAttributes()
-PUSH_PLATFORM_ATTRS
- .EventEndpointDeleted            #'TOPIC_ARN'. Send MESSAGEs on DeleteEndpoint()
-PUSH_PLATFORM_ATTRS
- .EventDeliveryFailure            #'TOPIC_ARN'. Send MESSAGEs on push failure
+SUB_CONFIRM                       #Use DEVICE_TOKEN instead
+PUSH_ENDPOINT.Token               #'DEVICE_TOKEN'. Obtained when mobile|desktop app registers with the push notification service
+                                  #Might need refreshing when app is either:
+                                  #  - updated
+                                  #  - re-installed
+                                  #  - restored on a new device
+                                  #  - app data cleared
+                                  #I.e. before sending pushes, should:
+                                  #  - check if DEVICE_TOKEN is latest
+                                  #  - if not, update PUSH_ENDPOINT.Token
+                                  #     - not create a new PUSH_ENDPOINT
+PUSH_ENDPOINT_ATTRS.Enabled       #BOOL. False if DEVICE_TOKEN not set, invalid or expired
+                                  #Should then fix by setting with latest DEVICE_TOKEN
 
                                   ┌───────────────────────┐
                                   │   PUSH ENDPOINT API   │
@@ -1940,11 +1934,50 @@ DeleteEndpoint()                  #Req: PUSH_ENDPOINT
                                   #  - only EndpointArn
                                   #Res: empty
 
+                                  ┌──────────────────┐
+                                  │   PUSH MESSAGE   │
+                                  └──────────────────┘
+
+SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
+
+MESSAGE                           #'{PUSH_PLATFORM_TYPE|default: 'SPECIFIC_MESSAGE'}' as JSON itself
+                                  #SPECIFIC_MESSAGEs is PUSH_PLATFORM_TYPE-specific, usually 'OBJ_JSON' or XML
+                                  #  - not fully documented yet
+                                  #  - for default, it is just 'BODY'
+
+PUSH_ENDPOINT.CustomUserData      #STR. Arbitrary data
+                                  #Max 2KB
+
+MESSAGE_ATTRS.AWS.SNS.MOBILE      #MMESSAGE
+ .PUSH_PLATFORM_TYPE              #Not fully documented yet
+
+MMESSAGE.TTL                      #NUM (in secs). Timeout from Publish() time to push reception
+                                  #Def: PUSH_PLATFORM_TYPE-specific, or 4 weeks
+
+                                  ┌────────────────┐
+                                  │   PUSH EVENT   │
+                                  └────────────────┘
+
+PUSH_PLATFORM_ATTRS.EventEndpoint*#'TOPIC_ARN'. Send MESSAGEs on specific events
+PUSH_PLATFORM_ATTRS
+ .EventEndpointCreated            #On CreatePlatformEndpoint()
+PUSH_PLATFORM_ATTRS
+ .EventEndpointUpdated            #On SetEndpointAttributes()
+PUSH_PLATFORM_ATTRS
+ .EventEndpointDeleted            #On DeleteEndpoint()
+PUSH_PLATFORM_ATTRS
+ .EventDeliveryFailure            #On push failure
+                                  #FailureType 'EndpointDisabled': PUSH_ENDPOINT_ATTRS.Enabled false, e.g. due to DEVICE_TOKEN expiring
+
                                   ┌───────────────────┐
                                   │   PUSH PLATFORM   │
                                   └───────────────────┘
 
 PUSH_PLATFORM                     #Push notification settings
+                                  #Creating is idempotent
+                                  #To handle re-installation should check if PUSH_PLATFORM already exists before either:
+                                  #  - creating it
+                                  #  - sending any push
 PUSH_ENDPOINT|PUSH_PLATFORM
  .PlatformApplicationArn          #'PUSH_PLATFORM_ARN'. 'arn:aws:sns:REGION:ACCOUNT_ID:app/PUSH_PLATFORM_TYPE/PUSH_PLATFORM'
 PUSH_PLATFORM.Name                #'PUSH_PLATFORM'
@@ -1953,7 +1986,7 @@ PUSH_PLATFORM.Attributes          #PUSH_PLATFORM_ATTRS
 
 PUSH_PLATFORM.Platform            #'PUSH_PLATFORM_TYPE'. Listed below
 PUSH_PLATFORM_ATTRS
- .AuthenticationMethod            #Same???
+ .AuthenticationMethod            #Sub-type of PUSH_PLATFORM_TYPE
 
 PUSH_PLATFORM_ATTRS
  .PlatformPrincipal               #PUSH_PLATFORM_TYPE-specific developer ID
@@ -1966,11 +1999,15 @@ PUSH_PLATFORM_ATTRS
 
 PUSH_PLATFORM.Platform            #'GCM' (Firebase Cloud Messaging)
                                   #For Android|iOS, web app and Chrome app/extensions, using Google Cloud
+                                  #Seems to also handle iOS, desktop apps and Unity
 PUSH_PLATFORM_ATTRS
  .PlatformPrincipal               #None
-PUSH_PLATFORM_ATTRS               #Either:
- .PlatformCredential              #  - API key
-                                  #  - JSON private key file
+PUSH_PLATFORM_ATTRS
+ .PlatformCredential              #JSON private key file ("service.json file")
+
+DEVICE_TOKEN                      #Registration ID
+
+MESSAGE                           #'OBJ_JSON'. Not fully documented yet
 
                                   ┌─────────────────────────┐
                                   │   PUSH PLATFORM CHINA   │
@@ -1979,9 +2016,22 @@ PUSH_PLATFORM_ATTRS               #Either:
 PUSH_PLATFORM.Platform            #'BAIDU' (Baidu Cloud Push)
                                   #For Android in China
 PUSH_PLATFORM_ATTRS
+ .AuthenticationMethod            #Always 'Token'
+PUSH_PLATFORM_ATTRS
  .PlatformPrincipal               #Public API key
 PUSH_PLATFORM_ATTRS
  .PlatformCredential              #Secret key
+
+PUSH_ENDPOINT_ATTRS.UserId
+PUSH_ENDPOINT_ATTRS.ChannelId     #Not fully documented yet
+
+DEVICE_TOKEN                      #Registration token
+
+MESSAGE                           #Not fully documented yet
+
+MMESAGE.DeployStatus
+MMESAGE.MessageKey
+MMESAGE.MessageType               #Not fully documented yet
 
                                   ┌─────────────────────────┐
                                   │   PUSH PLATFORM APPLE   │
@@ -1989,19 +2039,34 @@ PUSH_PLATFORM_ATTRS
 
 PUSH_PLATFORM.Platform            #'APNS[_SANDBOX]' (Apple Push Notification Service)
                                   #For iOS and Mac OS X
-PUSH_PLATFORM_ATTRS               #Either:
- .PlatformPrincipal               #  - SSL certificate
-                                  #  - signing key ID
-PUSH_PLATFORM_ATTRS               #If using PlatformPrincipal:
- .PlatformCredential              #  - SSL certificate: private key
-                                  #  - signing key ID: signing key
+                                  #SANDBOX is for testing
+PUSH_PLATFORM_ATTRS               #Either SSL certificate or signing key
+ .AuthenticationMethod            #Actual possible values not documented
 
+SSL CERTIFICATE ==>               #
+PUSH_PLATFORM_ATTRS
+ .PlatformPrincipal               #SSL certificate
+PUSH_PLATFORM_ATTRS               #Private key (.p12 file)
+ .PlatformCredential              #Expire after 1h
+PUSH_PLATFORM_ATTRS
+ .AppleCertificateExpiryDate      #DATE_NUM of SSL certificate expiration
+
+SIGNING KEY ==>                   #
+PUSH_PLATFORM_ATTRS
+ .PlatformPrincipal               #Signing key ID
+PUSH_PLATFORM_ATTRS               #Signing key (.p8 file)
+ .PlatformCredential              #Does not expire
 PUSH_PLATFORM_ATTRS
  .ApplePlatformTeamID             #STR. Apple developer account team ID
 PUSH_PLATFORM_ATTRS
  .ApplePlatformBundleID           #STR. iOS app ID
-PUSH_PLATFORM_ATTRS
- .AppleCertificateExpiryDate      #DATE_NUM of SSL certificate expiration
+
+MESSAGE                           #Not fully documented yet
+
+MMESSAGE.COLLAPSE_ID
+MMESSAGE.PRIORITY
+MMESSAGE.PUSH_TYPE
+MMESSAGE.TOPIC                    #Not fully documented yet
 
                                   ┌─────────────────────────────────┐
                                   │   PUSH PLATFORM WINDOWS PHONE   │
@@ -2014,6 +2079,11 @@ PUSH_PLATFORM_ATTRS
 PUSH_PLATFORM_ATTRS
  .PlatformCredential              #Private key
 
+MESSAGE                           #XML. Not fully documented yet
+
+MMESAGE.NotificationClass
+MMESAGE.Type                      #Not fully documented yet
+
                                   ┌───────────────────────────────────┐
                                   │   PUSH PLATFORM WINDOWS DESKTOP   │
                                   └───────────────────────────────────┘
@@ -2025,6 +2095,15 @@ PUSH_PLATFORM_ATTRS
 PUSH_PLATFORM_ATTRS
  .PlatformCredential              #Secret key
 
+MESSAGE                           #XML. Not fully documented yet
+
+MMESSAGE.CachePolicy
+MMESSAGE.Group
+MMESSAGE.Match
+MMESSAGE.SuppressPopup
+MMESSAGE.Tag
+MMESSAGE.Type                     #Not fully documented yet
+
                                   ┌──────────────────────────┐
                                   │   PUSH PLATFORM KINDLE   │
                                   └──────────────────────────┘
@@ -2035,6 +2114,10 @@ PUSH_PLATFORM_ATTRS
  .PlatformPrincipal               #Client ID
 PUSH_PLATFORM_ATTRS
  .PlatformCredential              #Client secret
+
+DEVICE_TOKEN                      #Device token
+
+MESSAGE                           #Not fully documented yet
 
                                   ┌───────────────────────┐
                                   │   PUSH PLATFORM API   │
@@ -2067,9 +2150,9 @@ DeletePlatformApplication()       #Req: PUSH_PLATFORM
                                   └───────────────────────────┘
 
 DVAR Application                  #'PUSH_PLATFORM'
-                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
+                                  #Sent with all METRICs except AWS/SNS/SMS*
 DVAR Platform                     #'PUSH_PLATFORM_TYPE'
-                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
+                                  #Sent with all METRICs except AWS/SNS/SMS*
 
                                   ┌──────────────────────────┐
                                   │   EVENT FORK PIPELINES   │
@@ -2093,30 +2176,3 @@ EVENT FORK PIPELINES ==>          #3 SAR APPs (see its doc) implementing followi
                                   └───────────┘
 
 goaws                             #See its doc
-
-MESSAGE_ATTRS.AWS.SNS.MOBILE
- .PUSH_PLATFORM_TYPE               #MMESSAGE
-
-MMESSAGE.TTL                      #???
-                                  #Also for PUSH_PLATFORM_TYPE:
-                                  #  - APNS_MDM|APNS_PASSBOOK|APNS_VOIP[_SANDBOX]
-                                  #  - MACOS[_SANDBOX]
-
-MMESAGE.DeployStatus
-MMESAGE.MessageKey
-MMESAGE.MessageType               #Only with Baidu???
-
-MMESSAGE.COLLAPSE_ID
-MMESSAGE.PRIORITY
-MMESSAGE.PUSH_TYPE
-MMESSAGE.TOPIC                    #Only with Apple???
-
-MMESAGE.NotificationClass
-MMESAGE.Type                      #Only with Windows phone???
-
-MMESSAGE.CachePolicy
-MMESSAGE.Group
-MMESSAGE.Match
-MMESSAGE.SuppressPopup
-MMESSAGE.Tag
-MMESSAGE.Type                     #Only with Windows desktop???
