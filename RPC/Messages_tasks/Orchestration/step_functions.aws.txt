@@ -788,36 +788,43 @@ CPARALLEL.branch(CCHAINABLE,...)->CPARALLEL: DSTATE_PARALLEL.Branches
 CCHAIN.toSingleState(...CARGS[, CPARALLEL_OPTS])->CPARALLEL: turn into a DSTATE_PARALLEL with a single branch
 CFRAGMENT.toSingleState(...CARGS[, CPARALLEL_OPTS])->CPARALLEL: same but also calls CFRAGMENT.prefixStates([CPARALLEL_OPTS.prefixStates])
 
-C*MAP.itemProcessor(CCHAINABLE)->C*MAP: DSTATE_MAP.ItemProcessor
-C*MAP_OPTS.maxConcurrency[Path]|itemsPath: DSTATE_MAP.*
-C*MAP_OPTS.itemSelector CDOEXPR: DSTATE_MAP.ItemSelector
-
-new Map(...CARGS[, CIMAP_OPTS])
+new [Distributed]Map(...CARGS[, CMAP_OPTS])
   - inherits from CSTATE
-  - STATE_MAP with DMAP_CONF.Mode 'INLINE'
-CIMAP_OPTS.*: CSTATE_OPTS.*
-
-new DistributedMap(...CARGS[, CDMAP_OPTS])
-  - inherits from CSTATE
-  - STATE_MAP with DMAP_CONF.Mode 'DISTRIBUTED'
-CDMAP_OPTS.*: CSTATE_OPTS.*
-CDMAP_OPTS.mapExecutionType: DMAP_CONF.ExecutionType
-CDMAP_OPTS.toleratedFailurePercentage|Count[Path]: DSTATE_MAP.*
-CDMAP_OPTS.label: DSTATE_MAP.*
-CDMAP_OPTS.resultWriter new ResultWriter(OPTS): DSTATE_MAP.ResultWriter
+  - STATE_MAP
+  - Map|DistributedMap uses DMAP_CONF.Mode 'INLINE|DISTRIBUTED'
+  - allows to MACHINE.roleArn PACTIONs:???
+     - states:StartExecution on Resource MACHINE_ARN
+     - states:DescribeExection|StopExecution on Resource MACHINE_ARN:* (i.e. any EXEC in MACHINE)
+CMAP_OPTS.*: CSTATE_OPTS.*
+CMAP.itemProcessor(CCHAINABLE)->CMAP: DSTATE_MAP.ItemProcessor
+CMAP_OPTS.mapExecutionType: DMAP_CONF.ExecutionType
+CMAP_OPTS.maxConcurrency|toleratedFailurePercentage|toleratedFailureCount|label: DSTATE_MAP.*
+CMAP_OPTS.maxConcurrencyPath|itemsPath|toleratedFailurePercentagePath|toleratedCountPath CDZEXPR: DSTATE_MAP.*
+CMAP_OPTS.itemSelector CDOEXPR: DSTATE_MAP.ItemSelector
+CMAP_OPTS.resultWriter new ResultWriter(OPTS): DSTATE_MAP.ResultWriter
   OPTS.bucket ICBUCKET: DWRITER_PARAMS.Bucket
     - ICBUCKET.bucketName can be CDFEXPR
   OPTS.prefix STR|CDFEXPR: DWRITER_PARAMS.Prefix
   Automatically allows right PACTIONs as described above
-CDMAP_OPTS.itemReader
-  - calls validateItemReader()???
-CDMAP_OPTS.itemBatcher
-  - calls validateItemBatcher()???
-
-If any CDMAP, allows:
-  - to MACHINE.roleArn
-  - PACTION states:StartExecution on Resource MACHINE_ARN
-  - PACTION states:DescribeExection|StopExecution on Resource MACHINE_ARN:* (i.e. any EXEC in MACHINE)
+CMAP_OPTS.itemReader: DREADER. One of:
+  - new S3ObjectsItemReader(OPTS)
+      OPTS.prefix STR: DREADER_PARAMS.*
+      Automatically allows PACTIONs described as above except:
+        - no COND_KEY s3:prefix
+        - Resource '*' if OPTS.bucketNamePath (instead of OPTS.bucket)
+  - new S3Json|CSV|ManifestItemReader(OPTS)
+      OPTS.key STR: DREADER_PARAMS.*
+      OPTS.csvHeaders: DREADER_CONF.CSV* among:
+        CsvHeaders.useFirstRow()
+        CsvHeaders.use('KEY'_ARR)
+      Automatically allows PACTIONs described as above except:
+       - Resource 'BUCKET_ARN:*'
+  - both:
+      OPTS.bucket ICBUCKET or OPTS.bucketNamePath 'BUCKET': DREADER_PARAMS.Bucket
+      OPTS.maxItems STR|DZEXPR: DREADER_CONF.MaxItems
+CMAP_OPTS.itemBatcher: DBATCH. new ItemBatcher(OPTS)
+  OPTS.max*|batchInput: DBATCH.*
+  OPTS.max*Path CDZEXPR: DBATCH.*
 
 JsonPath|Data|Context.*:
   - CD*EXPR
@@ -1767,6 +1774,13 @@ EVENT_TYPE MapStateAborted        #On STATE_MAP abort
 EVENT_TYPE MapStateFailed         #On STATE_MAP failure
 
                                   ┌───────────────────┐
+                                  │   MAP MAIN AUTH   │
+                                  └───────────────────┘
+
+PACTION states:StartExecution     #Must be allowed on MACHINE.roleArn, with Resource MACHINE_ARN (itself)
+                                  #Not if DMAP_CONF.Mode 'INLINE'
+
+                                  ┌───────────────────┐
                                   │   MAP MAIN LINT   │
                                   └───────────────────┘
 
@@ -1926,8 +1940,11 @@ DMAP_CONF.Mode                    #Either:
                                   #      - cons:
                                   #         - max child MACHINEs???
                                   #         - no BATCH???
+                                  #         - no DREADER|DWRITER???
                                   #         - no MAP_RUN nor ITEM_EXEC
                                   #         - no DMAP_CONF.ExecutionType
+                                  #         - no DMAP_CONF.ToleratedFailure*???
+                                  #         - no STATE_MAP_LABEL|STATE_MAP_ARN???
 
 MAP_RUN|DSTATE_MAP.MaxConcurrency #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
                                   #Can be 1 for serial
@@ -1967,19 +1984,19 @@ DSTATE_MAP.ItemReader             #DREADER. Set INPUT using S3 OBJECTs
                                   #  - 'States.Permissions': auth-related
                                   #  - 'States.ItemReaderFailed': else
 
-DREADER.Resource                  #Always 'arn:aws:states:::s3:getObject'
-
 DREADER.Arguments                %
 DREADER.Parameters               $#DREADER_PARAMS, as DOEXPR
 DREADER_PARAMS.Bucket             #S3 'BUCKET'
                                   #Must be in same ACCOUNT|REGION as MACHINE
 
-DREADER_PARAMS.Prefix             #'PREFIX'. S3 OBJECT prefix. Does ListObjectsV2()
+DREADER.Resource                  #'arn:aws:states:::s3:listObjectsV2'. Does ListObjectsV2()
+DREADER_PARAMS.Prefix             #'PREFIX'. S3 OBJECT prefix
                                   #New INPUT is response's OBJECTS.Contents OBJECT_ARR
                                   #Excludes proper FOLDERs, i.e. 'OBJECT' ends with delimiter (e.g. /) and has empty contents
                                   #See also S3 JOB_LAMBDA, as an alternative
 
-DREADER_PARAMS.Key                #S3 'OBJECT'. Alternative to DREADER_PARAMS.Prefix, doing GetObject()
+DREADER.Resource                  #'arn:aws:states:::s3:getObject'. Alternative, doing GetObject() instead
+DREADER_PARAMS.Key                #S3 'OBJECT'
                                   #New INPUT is ARR items contained in OBJECT
 DREADER.ReaderConfig              #DREADER_CONF
                                   #Only if DEADER_PARAMS.Key used
