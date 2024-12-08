@@ -65,6 +65,10 @@ PAGINATION ==>                    #Uses REQ.maxResults (def 100, max 1000) + REQ
 
 EVENTUAL CONSISTENCY ==>          #Create|update|delete take up to a few minutes
 
+                                  ┌────────────────┐
+                                  │   THROTTLING   │
+                                  └────────────────┘
+
 THROTTLING ==>                    #Per ACCOUNT + REGION
                                   #All soft. Many are REGION-specific
                                   #Following means RATE_LIMIT (burst BURST_LIMIT) (see token bucket algorithm doc)
@@ -85,6 +89,17 @@ THROTTLING ==>                    #Per ACCOUNT + REGION
                                   # 500/s (burst 3000): GetActivityTask(), SendTask*()
                                   # 1300/s (burst 300): StartExecution()
                                   # None: StartSyncExecution()
+
+                                  ┌────────────────────────┐
+                                  │   THROTTLING METRICS   │
+                                  └────────────────────────┘
+
+AWS/States/ProvisionedRefillRate  #RATE_LIMIT
+AWS/States/ProvisionedBucketSize  #BURST_LIMIT
+AWS/States/ConsumedCapacity       #NUM of requests per second
+AWS/States/ThrottledEvents        #NUM of throttled requests
+
+DVAR APIName                      #'ACTION'. With above METRICs
 
                                   ┌─────────────┐
                                   │   PRICING   │
@@ -120,8 +135,20 @@ PRICING ==>                       #Not Express: 1$ per 4e4 STATE_EXECs
 
 EXEC.billingDetails               #EXEC_BILLING
 EXEC_BILLING
- .billedDurationInMilliseconds    #NUM of ms charged
-EXEC_BILLING.billedMemoryUsedInMB #NUM of MB charged
+ .billedDurationInMilliseconds    #NUM of ms charged, after rounding up
+EXEC_BILLING.billedMemoryUsedInMB #NUM of MB charged, after rounding up
+
+                                  ┌─────────────────────┐
+                                  │   PRICING METRICS   │
+                                  └─────────────────────┘
+
+AWS/States/
+ ExpressExecutionBilledDuration 	#NUM of ms charged, after rounding up
+AWS/States/ExpressExecutionMemory #NUM of MB charged, before rounding up
+AWS/States/
+ ExpressExecutionBilledMemory 	  #NUM of MB charged, after rounding up
+
+DVAR StateMachineArn              #'MACHINE_ARN'. With above METRICs
 
                                   ┌──────────┐
                                   │   AUTH   │
@@ -270,6 +297,15 @@ CreateStateMachine()
 UpdateStateMachine()
 DescribeStateMachine()            #Return VERSION too (see above)
 
+                                  ┌─────────────────────┐
+                                  │   VERSION METRICS   │
+                                  └─────────────────────┘
+
+AWS/States/VersionCount           #NUM of VERSIONs
+                                  #DVAR ResourceArn 'VERSION_NUM'
+
+DVAR Version                      #'VERSION_NUM'. With AWS/States/Execution*
+
                                   ┌───────────┐
                                   │   ALIAS   │
                                   └───────────┘
@@ -332,6 +368,15 @@ DeleteStateMachineAlias()         #Req: ALIAS
                                   #  - only stateMachineAliasArn
                                   #Res: empty
 
+                                  ┌───────────────────┐
+                                  │   ALIAS METRICS   │
+                                  └───────────────────┘
+
+AWS/States/AliasCount             #NUM of ALIASs
+                                  #DVAR ResourceArn 'ALIAS_ARN'
+
+DVAR Alias                        #'ALIAS_ARN'. With AWS/States/Execution*
+
                                   ┌─────────────┐
                                   │   EXPRESS   │
                                   └─────────────┘
@@ -339,14 +384,14 @@ DeleteStateMachineAlias()         #Req: ALIAS
 MACHINE.type                      #Either 'STANDARD' (def) or 'EXPRESS'
 DMAP_CONF.ExecutionType           #Same but for child MACHINE
 
-EXCLUSIVE FEATURES ==>            #StartSyncExecution()
-                                  #EXEC_BILLING
-                                  #No max EXECs nor STATE_EXECs at once
-                                  #Less throttling on StartExecution(): 6000 (burst 6000)
+EXCLUSIVE FEATURES ==>            #Different pricing (see above), usually cheaper
+                                  #  - including EXEC_BILLING and AWS/States/Express* METRICs
+                                  #More scalable:
+                                  #  - no max EXECs nor STATE_EXECs at once
+                                  #  - less throttling on StartExecution(): 6000 (burst 6000)
+                                  #StartSyncExecution()
 
-MISSING FEATURES ==>              #DescribeStateMachineForExecution()
-                                  #ListExecutions()
-                                  #StopExecution()
+MISSING FEATURES ==>              #DescribeStateMachineForExecution(), ListExecutions(), StopExecution()
                                   #DescribeExecution(): only with ITEM_EXEC, not EXEC
                                   #EVENT
                                   #REDRIVE
@@ -503,16 +548,18 @@ StopExecution()                   #Req: [ITEM_]EXEC
                                   │   EXECUTION METRICS   │
                                   └───────────────────────┘
 
-AWS/States/ExecutionTime 	        #EXEC duration
+AWS/States/ExecutionTime 	        #EXEC duration (in ms)
 AWS/States/ExecutionsStarted 	    #NUM of EXEC starts
 AWS/States/ExecutionsSucceeded 	  #NUM of EXEC success
 AWS/States/ExecutionsAborted 	    #NUM of EXEC aborted
 AWS/States/ExecutionsFailed 	    #NUM of EXEC failed
 
 AWS/States/OpenExecutionCount     #NUM of ongoing EXECs
-                                  #Is very approximate, e.g. if <1e4, might show 0
+                                  #Very approximate, e.g. if <1e4, might show 0
                                   #  - i.e. should use STAT 'Maximum'
 AWS/States/OpenExecutionLimit     #Max allowed NUM of ongoing EXECs
+
+DVAR StateMachineArn              #'MACHINE_ARN'. With above METRICs
 
                                   ┌────────────┐
                                   │   EVENTS   │
@@ -762,6 +809,13 @@ STATE_EXEC                        #Starting executing a STATE
 
 AWS/States/ExecutionThrottled 	  #NUM of throttled STATE_EXECs
 
+AWS/States/ProvisionedRefillRate
+AWS/States/ProvisionedBucketSize
+AWS/States/ConsumedCapacity
+AWS/States/ThrottledEvents        #Same as above
+
+DVAR ServiceMetric                #Must be 'true' with the above 4 METRICs to show STATE_EXEC throttling
+
                                   ┌───────────────┐
                                   │   FLOW LINT   │
                                   └───────────────┘
@@ -914,7 +968,18 @@ SendTaskHeartbeat()               #Req: ACTIVITY_TASK
                                   │   TIMEOUT METRICS   │
                                   └─────────────────────┘
 
-AWS/States/ExecutionsTimedOut 	  #NUM of EXEC timed out
+AWS/States/ExecutionsTimedOut 	  #NUM of EXECs timed out
+AWS/States/LambdaFunctionsTimedOut#NUM of LAMBDA_TASKs timed out
+AWS/States/
+ ServiceIntegrationsTimedOut      #NUM of SERVICE_TASKs timed out
+AWS/States/ActivitiesTimedOut     #NUM of ACTIVITY_TASKs timed out
+AWS/States/
+ ActivitiesHeartbeatTimedOut      #NUM of ACTIVITY_TASKs timed out due to heartbeat
+
+DVAR StateMachineArn
+ |LambdaFunctionArn
+ |ServiceIntegrationResourceArn
+ |ActivityArn                     #See below
 
                                   ┌───────────┐
                                   │   CATCH   │
@@ -1005,6 +1070,22 @@ EVENT_INFO.redriveCount           #EXEC.redriveCount
 RedriveExecution()                #Req: REDRIVE
                                   #Res: EXEC
                                   #  - only redriveDate
+
+                                  ┌─────────────────────────┐
+                                  │   REDRIVE TOP METRICS   │
+                                  └─────────────────────────┘
+
+AWS/States/ExecutionsRedriven     #NUM of REDRIVEs
+AWS/States/
+ RedrivenExecutionsSucceeded      #NUM of REDRIVEs succeeded
+AWS/States/
+ RedrivenExecutionsAborted        #NUM of REDRIVEs aborted
+AWS/States/
+ RedrivenExecutionsTimedOut       #NUM of REDRIVEs timed out
+AWS/States/
+ RedrivenExecutionsFailed         #NUM of REDRIVEs failed
+
+DVAR StateMachineArn              #'MACHINE_ARN'. With above METRICs
 
                                   ┌───────────────────┐
                                   │   REDRIVE CHILD   │
@@ -1391,9 +1472,9 @@ DSTATE_WAIT.Seconds               #NUM[_DZEXPR]. Alternative to Timestamp
 
 EVENT_TYPE WaitStateAborted       #On STATE_WAIT abort
 
-                                  ┌──────────┐
-                                  │   TASK   │
-                                  └──────────┘
+                                  ┌───────────────┐
+                                  │   TASK MAIN   │
+                                  └───────────────┘
 
 DSTATE.Type                       #'Task'. STATE is STATE_TASK
                                   #On error, throws ERROR_CODE:
@@ -1421,9 +1502,9 @@ EVENT_INFO.region                 #'REGION' of DSTATE_TASK.Resource
 EVENT_INFO.parameters             #'INPUT_OBJ'
                                   #With EVENT_TYPE TaskScheduled
 
-                                  ┌───────────────┐
-                                  │   TASK AUTH   │
-                                  └───────────────┘
+                                  ┌────────────────────┐
+                                  │   TASK MAIN AUTH   │
+                                  └────────────────────┘
 
 DSTATE_TASK.Credentials           #DCREDS, as DOEXPR
 DCREDS.RoleArn                    #'ROLE_ARN' assumed by Resource
@@ -1431,19 +1512,18 @@ DCREDS.RoleArn                    #'ROLE_ARN' assumed by Resource
 EVENT_INFO.taskCredentials.roleArn#'ROLE_ARN'
                                   #With EVENT_TYPEs LambdaFunctionScheduled and TaskScheduled
 
-                                  ┌───────────────┐
-                                  │   TASK LINT   │
-                                  └───────────────┘
+                                  ┌────────────────────┐
+                                  │   TASK MAIN LINT   │
+                                  └────────────────────┘
 
 DIAG_ERROR INVALID_RESOURCE       #DSTATE_TASK.Resource must be valid
 
-                                  ┌────────────┐
-                                  │   LAMBDA   │
-                                  └────────────┘
+                                  ┌─────────────────┐
+                                  │   TASK LAMBDA   │
+                                  └─────────────────┘
 
-DSTATE_TASK.Resource              #'arn:aws:states::[aws-sdk]:lambda:invoke'. LAMBDA_TASK
+DSTATE_TASK.Resource              #'FUNC_ARN'. LAMBDA_TASK
                                   #Calls Lambda Invoke()
-                                  #What is 'aws-sdk'???
 INPUT.FunctionName                #INVOCATION_REQ.FunctionArn
 INPUT.Payload                     #INVOCATION_REQ.Payload
 OUTPUT.Payload                    #INVOCATION_RES.ResponseBody
@@ -1459,11 +1539,30 @@ EVENT_TYPE
 EVENT_TYPE LambdaFunctionSucceeded
 EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task*
 
-                                  ┌──────────────┐
-                                  │   SERVICES   │
-                                  └──────────────┘
+                                  ┌─────────────────────────┐
+                                  │   TASK LAMBDA METRICS   │
+                                  └─────────────────────────┘
+
+AWS/States/LambdaFunctionRunTime  #Duration (in ms)	of LAMBDA_TASKs
+AWS/States/
+ LambdaFunctionScheduleTime       #Duration (in ms) of LAMBDA_TASKs, scheduling time only
+AWS/States/LambdaFunctionTime     #Duration (is ms) of LAMBDA_TASKs, excluding scheduling
+
+AWS/States/LambdaFunctionsStarted #NUM of LAMBDA_TASKs started
+AWS/States/
+ LambdaFunctionsScheduled         #NUM of LAMBDA_TASKs scheduled
+AWS/States/
+ LambdaFunctionsSucceeded         #NUM of LAMBDA_TASKs successful
+AWS/States/LambdaFunctionsFailed  #NUM of LAMBDA_TASKs failed
+
+DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
+
+                                  ┌──────────────────┐
+                                  │   TASK SERVICE   │
+                                  └──────────────────┘
 
 DSTATE_TASK.Resource              #'arn:aws:states:[REGION???]:[ACCOUNT_ID???]:SERVICE:ACTION'. SERVICE_TASK
+                                  #'arn:aws:states::[aws-sdk???]:lambda:invoke' possible too, but not considered LAMBDA_TASK???
                                   #Run specific AWS SERVICE ACTION
                                   #Only specific ones, documented in their respective docs
 INPUT.*                           #Passed to SERVICE-specific ACTION PARAMS.*
@@ -1474,9 +1573,30 @@ OUTPUT.*                          #From SERVICE-specific ACTION RES.*
 SERVICE_CALLBACK_TASK             #With 'ACTION.waitForTaskToken'???
 SERVICE_SYNC_TASK                 #With 'ACTION.sync'???
 
-                                  ┌──────────┐
-                                  │   HTTP   │
-                                  └──────────┘
+                                  ┌──────────────────────────┐
+                                  │   TASK SERVICE METRICS   │
+                                  └──────────────────────────┘
+
+AWS/States/
+ ServiceIntegrationRunTime        #Duration (in ms)	of SERVICE_TASKs
+AWS/States/
+ ServiceIntegrationScheduleTime   #Duration (in ms) of SERVICE_TASKs, scheduling time only
+AWS/States/ServiceIntegrationTime #Duration (is ms) of SERVICE_TASKs, excluding scheduling
+
+AWS/States/
+ ServiceIntegrationsStarted       #NUM of SERVICE_TASKs started
+AWS/States/
+ ServiceIntegrationsScheduled     #NUM of SERVICE_TASKs scheduled
+AWS/States/
+ ServiceIntegrationsSucceeded     #NUM of SERVICE_TASKs successful
+AWS/States/
+ ServiceIntegrationsFailed        #NUM of SERVICE_TASKs failed
+
+DVAR ServiceIntegrationResourceArn#DSTATE_TASK.Resource. With AWS/States/ServiceIntegration*
+
+                                  ┌───────────────┐
+                                  │   TASK HTTP   │
+                                  └───────────────┘
 
 DSTATE_TASK.Resource              #'arn:aws:states:::http:invoke'. HTTP_TASK
                                   #Call an HTTP request
@@ -1506,20 +1626,19 @@ TEST_RES.body                     #'OBJ'
 TEST_IN.revealSecrets             #BOOL. If false (def), fail if TEST_OUT includes some known secret fields
                                   #At the moment, this seems to be only authentication with HTTP TASK
 
-                                  ┌───────────────┐
-                                  │   HTTP AUTH   │
-                                  └───────────────┘
+                                  ┌────────────────────┐
+                                  │   TASK HTTP AUTH   │
+                                  └────────────────────┘
 
 PACTION states:InvokeHTTPEndpoint #???
 
 PACTION states:RevealSecrets      #Must be allowed on current PRINCIPAL if TEST_IN.revealSecrets true
 
-                                  ┌──────────────┐
-                                  │   ACTIVITY   │
-                                  └──────────────┘
+                                  ┌───────────────────────────┐
+                                  │   TASK ACTIVITY DECLARE   │
+                                  └───────────────────────────┘
 
-ACTIVITY                          #Worker to process a custom TASK
-                                  #E.g. long-running instance
+ACTIVITY                          #Sets of ACTIVITY_TASKs
                                   #Create is idempotent
                                   #Max 1e4 (soft up to 1.5e4) per ACCOUNT
 ACTIVITY.activityArn              #'ACTIVITY_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:activity:ACTIVITY'
@@ -1529,9 +1648,9 @@ ACTIVITY.creationDate             #DATE_NUM
 
 DSTATE_TASK.Resource              #'ACTIVITY_ARN'
 
-                                  ┌──────────────────┐
-                                  │   ACTIVITY API   │
-                                  └──────────────────┘
+                                  ┌───────────────────────────────┐
+                                  │   TASK ACTIVITY DECLARE API   │
+                                  └───────────────────────────────┘
 
 CreateActivity()                  #Req: ACTIVITY
                                   #  - no activityArn
@@ -1548,22 +1667,24 @@ DeleteActivity()                  #Req: ACTIVITY
                                   #  - only activityArn
                                   #Res: empty
 
-                                  ┌───────────────────┐
-                                  │   ACTIVITY TASK   │
-                                  └───────────────────┘
+                                  ┌───────────────────────┐
+                                  │   TASK ACTIVITY RUN   │
+                                  └───────────────────────┘
+
+ACTIVITY_TASK                     #Custom TASK, e.g. on a long-running instance
+ACTIVITY_TASK.taskToken           #'ACTIVITY_TASK_MID'
+                                  #Empty STR if long polled for 1m, i.e. must retry
 
 ACTIVITY_TASK_GET                 #Get an ACTIVITY_TASK
                                   #ACTIVITY_TASK is created when an EXEC runs a STATE_TASK
                                   #that uses DSTATE_TASK.Resource 'ACTIVITY_ARN'
                                   #Until created, long polls for it
+                                  #"Scheduled" is when created but not fetched by ACTIVITY_TASK_GET yet
                                   #On success|failure, must call SendTaskSuccess|Failure()
                                   #Not logged by CloudTrail
                                   #Max 1e3 at once
 ACTIVITY_TASK_GET.activityArn     #'ACTIVITY_ARN'
 ACTIVITY_TASK_GET.workerName      #'ACTIVITY_WORKER'. Only used for logging purpose, with EVENT_INFO.workerName
-
-ACTIVITY_TASK.taskToken           #'ACTIVITY_TASK_MID'
-                                  #Empty STR if long polled for 1m, i.e. must retry
 
 EVENT_TYPE ActivityScheduled      #
 EVENT_INFO.resource               #'ACTIVITY_ARN'
@@ -1575,9 +1696,9 @@ EVENT_INFO.workerName             #'ACTIVITY_WORKER'
 EVENT_TYPE ActivitySucceeded
 EVENT_TYPE ActivityFailed         #
 
-                                  ┌───────────────────────┐
-                                  │   ACTIVITY TASK API   │
-                                  └───────────────────────┘
+                                  ┌───────────────────────────┐
+                                  │   TASK ACTIVITY RUN API   │
+                                  └───────────────────────────┘
 
 GetActivityTask()                 #Req: ACTIVITY_TASK_GET
                                   #Res: ACTIVITY_TASK
@@ -1588,6 +1709,21 @@ SendTaskSuccess()                 #Req: ACTIVITY_TASK
 SendTaskFailure()                 #Req: ACTIVITY_TASK
                                   #  - only one with error, cause
                                   #Res: empty
+
+                                  ┌───────────────────────────────┐
+                                  │   TASK ACTIVITY RUN METRICS   │
+                                  └───────────────────────────────┘
+
+AWS/States/ActivityRunTime        #Duration (in ms)	of ACTIVITY_TASKs
+AWS/States/ActivityScheduleTime   #Duration (in ms) of ACTIVITY_TASKs, scheduling time only
+AWS/States/ActivityTime           #Duration (is ms) of ACTIVITY_TASKs, excluding scheduling
+
+AWS/States/ActivitiesStarted      #NUM of ACTIVITY_TASKs started
+AWS/States/ActivitiesScheduled    #NUM of ACTIVITY_TASKs scheduled
+AWS/States/ActivitiesSucceeded    #NUM of ACTIVITY_TASKs successful
+AWS/States/ActivitiesFailed       #NUM of ACTIVITY_TASKs failed
+
+DVAR ActivityArn                  #'ACTIVITY_ARN'. With AWS/States/Activit*
 
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
