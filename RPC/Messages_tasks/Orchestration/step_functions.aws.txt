@@ -44,6 +44,8 @@ TODO:
   - JSONata
   - https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html
      - already done:
+        - Starting state machines:
+           - Redriving state machines
         - Processing input and output:
            - Map state input and output fields in Step Functions
   - add summary
@@ -78,7 +80,7 @@ PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
                                   #           - 50MB
                                   #           - DEFINITION
                                   #           - max(INPUT, OUTPUT)
-                                  #           - for each nested MACHINE run: max(INPUT, OUTPUT)
+                                  #           - for each child MACHINE run: max(INPUT, OUTPUT)
                                   #        - rounded up by 64MB per EXEC
                                   #  - "EXEC" is either top|child
                                   #     - i.e. include STEP_ITERs
@@ -132,7 +134,7 @@ MACHINE                           #Creation is idempotent (if same REQ)
                                   #Delete terminate ongoing EXECs and wait for them to fail
                                   #Delete also delete VERSIONs|ALIASs
 MACHINE.stateMachineArn           #In output: 'MACHINE_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:stateMachine:MACHINE'
-                                  #In input: 'MACHINE_QUALIFIED_ARN'
+                                  #In input: 'QUALIFIED_MACHINE_ARN'
 MACHINE.name                      #'MACHINE'
                                   #Max 80 chars, [:alnum:]-_
 MACHINE.creationDate              #DATE_NUM
@@ -262,7 +264,7 @@ ALIAS_ROUTING.weight              #NUM. 0 to 100
                                   #Sum of all ALIAS_ROUTING.weight must be 100
 
 QUALIFIER                         #'VERSION_NUM|ALIAS'
-MACHINE_QUALIFIED_ARN             #'MACHINE_ARN[:QUALIFIER]' (def: latest VERSION) or 'STATE_MAP_ARN'
+QUALIFIED_MACHINE_ARN             #'MACHINE_ARN[:QUALIFIER]' (def: latest VERSION) or 'STATE_MAP_ARN'
 
                                   ┌────────────────┐
                                   │   ALIAS AUTH   │
@@ -291,8 +293,8 @@ MISSING FEATURES ==>              #DescribeStateMachineForExecution()
 
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
 
-EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXECUTION:EXPRESS_MID'
-MAP_RUN_EXEC_ARN                  #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXECUTION:EXPRESS_MID'
+EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXEC:EXPRESS_MID'
+MAP_RUN_EXEC_ARN                  #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXEC:EXPRESS_MID'
 
                                   ┌────────────────┐
                                   │   DEFINITION   │
@@ -392,23 +394,22 @@ StopExecution()                   #Req: EXEC
                                   #Res: EXEC
                                   #  - only stopDate
 
-EXEC                              #Execute a MACHINE
+EXEC                              #Execution of a MACHINE
                                   #Create is idempotent (if same REQ and another is ongoing)
-                                  #Child MACHINEs have child EXECs
-EXEC.executionArn                 #'EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE:EXECUTION'
+EXEC.executionArn                 #'EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE:EXEC'
 EXEC.name                         #'EXEC' (def: random UUID)
                                   #Max 80 chars, [:alnum:]-_
 EXEC.startDate                    #DATE_NUM
 EXEC.stopDate                     #DATE_NUM
 
-EXEC.stateMachineArn              #In input: 'MACHINE_QUALIFIED_ARN'
+EXEC.stateMachineArn              #In input: 'QUALIFIED_MACHINE_ARN'
                                   #In output: 'MACHINE_ARN'
 EXEC.stateMachineVersionArn       #'VERSION_ARN' (if specified)
 EXEC.stateMachineAliasArn         #'ALIAS_ARN' (if specified)
 
 SYNC EXECUTION ==>                #When using StartSyncExecution()
                                   #Similar to StartExecution() + waiting for completion + returning DescribeExecution()
-                                  #EXEC.stateMachineArn must be 'MACHINE_ARN', not 'MACHINE_QUALIFIED_ARN'
+                                  #EXEC.stateMachineArn must be 'MACHINE_ARN', not 'QUALIFIED_MACHINE_ARN'
                                   #Not logged by CloudTrail
 
 EXEC.status                       #One of:
@@ -443,14 +444,15 @@ REDRIVE                           #Retry an EXEC that failed
                                   #For any failure, including timeout
                                   #Does not repeat previous successful STATEs nor STEP_ITERs
                                   #  - i.e. restart from where it stopped
+                                  #Resets timeouts and RETRYs
                                   #Uses the exact same EXEC.* parameters
                                   #Must have failed in last 14 days
 REDRIVE.executionArn              #'EXEC_ARN'. Same one, i.e. does not create a new EXEC_ARN
 REDRIVE.clientToken               #STR
 
-EXEC|MAP_RUN.redriveCount         #NUM
+EXEC|MAP_RUN.redriveCount         #NUM of REDRIVEs done
                                   #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
-EXEC|MAP_RUN.redriveDate          #DATE_NUM
+EXEC|MAP_RUN.redriveDate          #DATE_NUM of last REDRIVE
                                   #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
 EXEC.redriveStatus                #STR
                                   #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
@@ -460,8 +462,7 @@ EXEC.redriveFilter                #STR
                                   #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListExecutions.html ???
 EXEC.status                       #Can be 'PENDING_REDRIVE'
 
-EVENT_TYPE ExecutionRedriven
-EVENT_TYPE MapRunRedriven         #
+EVENT_TYPE ExecutionRedriven      #On REDRIVE
 
 EVENT_INFO.redriveCount           #NUM
                                   #With EVENT_TYPEs ExecutionRedriven and MapRunRedriven
@@ -885,7 +886,6 @@ DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
 
 DMACHINE.TimeoutSeconds           #NUM (def: none). Timeout for an EXEC
                                   #After NUMs, throw ERROR_CODE 'States.Timeout'
-                                  #On REDRIVE, timeout is restarted
                                   #Only for top-level MACHINE
 DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 60). Same but on STATE_TASK
 
@@ -936,7 +936,7 @@ DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
 
 DSTATE_PARALLEL.Branches          #DMACHINE_ARR. Required
 
-STEP_ITER                         #Run of a nested MACHINE, i.e. either a STATE_PARALLEL branch or a STATE_MAP ITEM
+STEP_ITER                         #Run of a child MACHINE, i.e. either a STATE_PARALLEL branch or a STATE_MAP ITEM
 
 EVENT_TYPE ParallelStateEntered
 EVENT_TYPE ParallelStateExited
@@ -953,11 +953,6 @@ DSTATE.Type                       #'Map'. STATE is STATE_MAP
                                   #Executes one child MACHINEs per ITEM_ARR, in parallel
                                   #OUTPUT is ARR of their OUTPUTs
 
-DSTATE_MAP.Label                  #'STATE_MAP_LABEL' (def: random ID). STATE_MAP name
-                                  #Use by executor, as opposed to 'STATE' which is used inside DEFINITION
-                                  #Must be unique per MACHINE
-                                  #Max 40 chars, [:alnum:]-_
-
 EVENT_TYPE MapStateEntered
 EVENT_TYPE MapStateExited
 EVENT_TYPE MapStateStarted
@@ -972,10 +967,6 @@ EVENT_INFO.length                 #NUM
                                   │   MAP MAIN LINT   │
                                   └───────────────────┘
 
-DIAG_ERROR DUPLICATE_LABEL_NAME   #'STATE_MAP_LABEL' must be unique per MACHINE
-
-DIAG_ERROR INVALID_LABEL_NAME     #'STATE_MAP_LABEL' must be valid
-
 DIAG_ERROR TOO_DEEPLY_NESTED      #Must be hit child STATE max depth (which is it???)
 
                                   ┌───────────────────┐
@@ -986,8 +977,6 @@ ORDER ==>                        %#Arguments -> ItemReader -> Items -> ItemSelec
                                  $#InputPath -> ItemReader -> ItemsPath -> ItemSelector -> ItemBatcher
 
 DSTATE_MAP.ItemProcessor          #DMACHINE, performed on each ITEM
-STATE_MAP_ARN                     #'MACHINE_ARN/STATE_MAP_LABEL'. DMACHINE of a STATE_MAP
-MACHINE.label                     #'STATE_MAP_LABEL', when using a STATE_MAP_ARN
 
 DSTATE_MAP.Items                 %
 DSTATE_MAP.ItemsPath             $#DZEXPR selecting ITEM_ARR
@@ -1079,19 +1068,35 @@ ListMapRuns()                     #Req: MAP_RUN
 DescribeMapRun()                  #Req: MAP_RUN
                                   #  - only mapRunArn
                                   #Res: MAP_RUN
-DescribeStateMachineForExecution()#Also returns mapRunArn (see above), if a child EXEC_ARN is passed
-ListExecutions()                  #Can list child EXECs by passing EXEC.mapRunArn
 
+DSTATE_MAP.Label                  #'STATE_MAP_LABEL' (def: random ID). STATE_MAP name
+                                  #Use by executor, as opposed to 'STATE' which is used inside DEFINITION
+                                  #Must be unique per MACHINE
+                                  #Max 40 chars, [:alnum:]-_
+
+STATE_MAP_ARN                     #'MACHINE_ARN/STATE_MAP_LABEL'. DMACHINE of a STATE_MAP
+                                  #Can be used as QUALIFIED_MACHINE_ARN
+MACHINE.label                     #'STATE_MAP_LABEL', when using a STATE_MAP_ARN
+
+MAP_RUN                           #Execution of a STATE_MAP
 MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:mapRun:MACHINE/STATE_MAP_LABEL:MAP_RUN_MID'
 MAP_RUN.startDate                 #DATE_NUM
 MAP_RUN.stopDate                  #DATE_NUM
 
-MAP_RUN.status                    #STR
-
 MAP_RUN.stateMachineArn           #'MACHINE_ARN'
-MAP_RUN.executionArn              #'EXEC_ARN'
-EXEC.mapRunArn                    #'MAP_RUN_ARN'
-MAP_RUN_EXEC_ARN                  #'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE/STATE_MAP_LABEL:EXECUTION'???
+
+EXEC                              #Can be MAP_RUN-specific
+EXEC.mapRunArn                    #'MAP_RUN_ARN'. Only set if EXEC is MAP_RUN-specific
+MAP_RUN.executionArn              #'MAP_RUN_EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE/STATE_MAP_LABEL:EXEC'
+                                  #Similar meaning as MAP_RUN_ARN
+                                  #Meant to replace EXEC_ARN to perform some actions on a MAP_RUN instead of a MACHINE:
+                                  #  - DescribeStateMachineForExecution()
+                                  #  - ListExecutions()
+                                  #  - RedriveExecution()
+                                  #  - EVENTs??? others???
+                                  #Replace with a concept of QUALIFIED_EXEC_ARN???
+
+MAP_RUN.status                    #STR
 
 EXEC.itemCount                    #Total NUM of ITEMs
 MAP_RUN.executionCounts           #MAP_COUNT
@@ -1110,7 +1115,10 @@ MAP_COUNT.total                   #NUM
 EVENT_TYPE MapRunStarted
 EVENT_TYPE MapRunSucceeded
 EVENT_TYPE MapRunAborted
-EVENT_TYPE MapRunFailed           #
+EVENT_TYPE MapRunFailed           #On MAP_RUN start|end
+
+EVENT_TYPE MapRunRedriven         #Like EVENT_TYPE ExecutionRedriven, but when on a MAP_RUN
+                                  #I.e. when QUALIFIED_MACHINE_ARN was a STATE_MAP_ARN
 
 EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
                                   #With EVENT_TYPEs MapRunStarted and MapRunRedriven
@@ -1121,13 +1129,20 @@ EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
 
 EXEC_ARN                          #Used as Resource for ListMapRuns()
 
-EXEC_ARN                          #Used as Resource for
-
 MAP_RUN_ARN                       #Used as Resource for UpdateMapRun|DescribeMapRun()
                                   #Also for ListExecutions() if EXEC.mapRunArn set
-*Execution* (EXEC, REDRIVE, EVENTs)
-  - STATE_MAP_ARN as MACHINE_QUALIFIED_ARN
-  - + ListMapRuns() always
+
+MAP_RUN_EXEC_ARN                  #Used as Resource for *Execution*() (EXEC, REDRIVE, EVENTs)
+                                  #  - instead of EXEC_ARN
+                                  #  - when STATE_MAP_ARN passed as QUALIFIED_MACHINE_ARN
+
+                                  ┌──────────────────┐
+                                  │   MAP RUN LINT   │
+                                  └──────────────────┘
+
+DIAG_ERROR DUPLICATE_LABEL_NAME   #'STATE_MAP_LABEL' must be unique per MACHINE
+
+DIAG_ERROR INVALID_LABEL_NAME     #'STATE_MAP_LABEL' must be valid
 
                                   ┌─────────────────┐
                                   │   MAP S3 READ   │
