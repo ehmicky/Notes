@@ -72,7 +72,9 @@ EVENTUAL CONSISTENCY ==>          #Create|update|delete take up to a few minutes
                                   │   PRICING   │
                                   └─────────────┘
 
-PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
+PRICING ==>                       #Not Express: 1$ per 4e4 STATE execution
+                                  #  - each RETRY count as 1 STATE execution
+                                  #  - each ITER has its own count of STATE executions
                                   #  - free: 4e3
                                   #Express:
                                   #  - 1$ per 1e6 EXECs
@@ -96,7 +98,7 @@ PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
                                   #  - with Express, what matters more:
                                   #     - if <= 1s * 64MB: NUM of EXECs
                                   #     - else: duration and memory
-                                  #  - ITERs can be expensive
+                                  #  - NUM of ITERs can multiply cost, for both Express and not
                                   #  - use BATCHs
 
 EXEC.billingDetails               #EXEC_BILLING
@@ -297,12 +299,13 @@ EXCLUSIVE FEATURES ==>            #StartSyncExecution()
 MISSING FEATURES ==>              #DescribeStateMachineForExecution()
                                   #ListExecutions()
                                   #StopExecution()
-                                  #DescribeExecution() (except if EXEC.mapRunArn set)
+                                  #DescribeExecution(): only with ITEM_EXEC, not EXEC
                                   #REDRIVE
                                   #  - not for top-level EXECs: no RedriveExecution()
                                   #  - but can re-run failed ITERs by passing STATE_MAP_ARN to StartExecution()
                                   #     - however, already successful STATEs in a failed ITER are re-run
-                                  #ITEM_EXEC
+                                  #  - no EVENTs
+                                  #  - no ITEM_EXEC.redriveDate
 
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
 
@@ -442,59 +445,6 @@ EVENT_INFO.stateMachineAliasArn   #STR
                                   #With EVENT_TYPE ExecutionStarted
 EVENT_INFO.stateMachineVersionArn #STR
                                   #With EVENT_TYPE ExecutionStarted
-
-                                  ┌─────────────┐
-                                  │   REDRIVE   │
-                                  └─────────────┘
-
-RedriveExecution()                #Req: REDRIVE
-                                  #Res: EXEC
-                                  #  - only redriveDate
-
-REDRIVE                           #Retry an EXEC that failed
-                                  #For any failure, including timeout
-                                  #Does not repeat already successful STATEs
-                                  #  - i.e. restart from where it stopped
-                                  #Resets timeouts and RETRYs
-                                  #Uses the exact same EXEC.* parameters
-                                  #Must have failed in last 14 days
-REDRIVE.executionArn              #'EXEC_ARN'. Same one, i.e. does not create a new EXEC_ARN
-REDRIVE.clientToken               #STR. Idempotency token (see aws_network doc)
-                                  #Valid for 15m
-
-EXEC|MAP_RUN.redriveCount         #NUM of REDRIVEs done
-                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
-EXEC|MAP_RUN.redriveDate          #DATE_NUM of last REDRIVE
-                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
-EXEC.redriveStatus                #STR
-                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
-EXEC.redriveStatusReason          #STR
-                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
-EXEC.redriveFilter                #STR
-                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListExecutions.html ???
-ITEM_EXEC.status                  #Is 'PENDING_REDRIVE' when waiting due to MAP_RUN.maxConcurrency
-
-EVENT_TYPE ExecutionRedriven      #On REDRIVE
-EVENT_INFO.redriveCount           #NUM
-                                  #With EVENT_TYPE ExecutionRedriven
-                                  #Different descriptions in
-                                  #https://docs.aws.amazon.com/step-functions/latest/apireference/API_ExecutionRedrivenEventDetails.html#StepFunctions-Type-ExecutionRedrivenEventDetails-redriveCount???
-                                  #And
-                                  #https://docs.aws.amazon.com/step-functions/latest/apireference/API_MapRunRedrivenEventDetails.html#StepFunctions-Type-MapRunRedrivenEventDetails-redriveCount???
-
-ITERS ==>                         #REDRIVE includes all ITERs
-                                  #  - cannot target one specific individual ITER
-                                  #Does not repeat:
-                                  #  - already successful ITERs
-                                  #  - already successful STATEs in a failed ITER
-                                  #  - unless EXEC failed with 'States.DataLimitExceeded|Runtime'
-EVENT_TYPE MapRunRedriven         #When MAP_RUN repeated as part of a REDRIVE
-                                  #Max 1e3 REDRIVEs per MAP_RUN
-EVENT_INFO.redriveCount           #NUM. Like above
-EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
-                                  #With EVENT_TYPE MapRunRedriven
-
-TODO: move under RETRY???
 
                                   ┌────────────┐
                                   │   EVENTS   │
@@ -711,21 +661,15 @@ DSTATE.Next                       #'STATE'. Next STATE
                                   #Cannot target a 'STATE' in parent|child MACHINEs
                                   #Not with STATE_PASS|FAIL|CHOICE, or if DSTATE.End true. Required otherwise
 
-TRANSITION                        #Starting a new STATE:
-                                  #  - EXEC|REDRIVE: initial STATE
-                                  #  - DSTATE|DCHOICE.Next, DSTATE_CHOICE.Default: next STATE
-                                  #  - RETRYs
-                                  #For each ITER, each STATE priced as 1 TRANSITION
-                                  #  - i.e. NUM of ITERs can multiply the cost
-
-DSTATE.End                        #BOOL (def: false). End MACHINE successfully
-                                  #Continue parent MACHINEs
-                                  #Not with STATE_CHOICE|SUCCEED|FAIL
-                                  #Together with STATE_SUCCEED|FAIL, called "terminal STATE" (of a MACHINE)
-
 DSTATE.Type                       #'Succeed'. STATE is STATE_SUCCEED
                                   #End MACHINE successfully
                                   #Continue parent MACHINEs
+
+DSTATE.End                        #BOOL (def: false). If true, same as using DSTATE.Next towards STATE_SUCCEED except:
+                                  #  - pro: cheaper since no additional STATE
+                                  #  - con: no conditional logic, i.e. not on DCHOICE.*
+                                  #Not with STATE_CHOICE|SUCCEED|FAIL
+                                  #Together with STATE_SUCCEED|FAIL, called "terminal STATE" (of a MACHINE)
 
 TEST_OUT.nextState                #STR
 
@@ -857,6 +801,29 @@ DSTATE.Cause                      #'MESSAGE'[_DZEXPR] (def: none). ERROR_OUTPUT.
 
 EVENT_TYPE FailStateEntered       #
 
+                                  ┌─────────────┐
+                                  │   TIMEOUT   │
+                                  └─────────────┘
+
+DMACHINE.TimeoutSeconds           #NUM (def: none). Timeout for an EXEC
+                                  #After NUMs, throw ERROR_CODE 'States.Timeout'
+                                  #Only for top-level MACHINE
+DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 60). Same but on STATE_TASK
+
+DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
+                                  #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
+                                  #Must be < TimeoutSeconds
+
+EVENT_INFO.timeoutInSeconds       #NUM
+                                  #With EVENT_TYPEs *Scheduled
+
+EVENT_INFO.heartbeatInSeconds     #NUM
+                                  #With EVENT_TYPEs ActivityScheduled and TaskScheduled
+
+EXEC.status                       #Can be 'TIMED_OUT'
+
+EVENT_TYPE ExecutionTimedOut      #
+
                                   ┌───────────┐
                                   │   CATCH   │
                                   └───────────┘
@@ -904,28 +871,58 @@ DRETRY.JitterStrategy             #'NONE' (def) or 'FULL'. Applies random jitter
 DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
                                   #If reached, continues to retry, but with this delay
 
-                                  ┌─────────────┐
-                                  │   TIMEOUT   │
-                                  └─────────────┘
+                                  ┌─────────────────┐
+                                  │   REDRIVE TOP   │
+                                  └─────────────────┘
 
-DMACHINE.TimeoutSeconds           #NUM (def: none). Timeout for an EXEC
-                                  #After NUMs, throw ERROR_CODE 'States.Timeout'
-                                  #Only for top-level MACHINE
-DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 60). Same but on STATE_TASK
+RedriveExecution()                #Req: REDRIVE
+                                  #Res: EXEC
+                                  #  - only redriveDate
 
-DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
-                                  #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
-                                  #Must be < TimeoutSeconds
+REDRIVE                           #Retry an EXEC that failed
+                                  #For any failure, including timeout
+                                  #Does not repeat already successful STATEs
+                                  #  - i.e. restart from where it stopped
+                                  #Resets timeouts and RETRYs
+                                  #Uses the exact same EXEC.* parameters
+                                  #Must have failed in last 14 days
 
-EVENT_INFO.timeoutInSeconds       #NUM
-                                  #With EVENT_TYPEs *Scheduled
+REDRIVE.executionArn              #'EXEC_ARN'. Same one, i.e. does not create a new EXEC_ARN
+REDRIVE.clientToken               #STR. Idempotency token (see aws_network doc)
+                                  #Valid for 15m
 
-EVENT_INFO.heartbeatInSeconds     #NUM
-                                  #With EVENT_TYPEs ActivityScheduled and TaskScheduled
+ITEM_EXEC.redriveFilter           #'REDRIVEN|NOT_REDRIVEN'. Whether >= 1 REDRIVE started
+EXEC|MAP_RUN.redriveCount         #NUM of REDRIVEs started
+EXEC|MAP_RUN.redriveDate          #DATE_NUM of last REDRIVE. null if none
+EXEC.redriveStatus                #One of:
+                                  #  - 'REDRIVABLE': can do a REDRIVE on [ITEM_]EXEC
+                                  #  - 'REDRIVABLE_BY_MAP_RUN': can do a REDRIVE on ITEM_EXECs, not EXEC
+                                  #  - 'NOT_REDRIVABLE': cannot do a REDRIVE on [ITEM_]EXEC, e.g. due to:
+                                  #     - did not fail
+                                  #     - hit max limits
+EXEC.redriveStatusReason          #'MESSAGE' if redriveStatus 'NOT_REDRIVABLE'
+ITEM_EXEC.status                  #Is 'PENDING_REDRIVE' when waiting due to MAP_RUN.maxConcurrency
 
-EXEC.status                       #Can be 'TIMED_OUT'
+EVENT_TYPE ExecutionRedriven      #On REDRIVE
+EVENT_INFO.redriveCount           #EXEC.redriveCount
+                                  #With EVENT_TYPE ExecutionRedriven
 
-EVENT_TYPE ExecutionTimedOut      #
+                                  ┌───────────────────┐
+                                  │   REDRIVE CHILD   │
+                                  └───────────────────┘
+
+REDRIVE ITERS ==>                 #REDRIVE includes all ITERs
+                                  #  - cannot target one specific individual ITER
+                                  #Does not repeat:
+                                  #  - already successful ITERs
+                                  #  - already successful STATEs in a failed ITER
+                                  #  - unless EXEC failed with 'States.DataLimitExceeded|Runtime'
+
+EVENT_TYPE MapRunRedriven         #When MAP_RUN repeated as part of a REDRIVE
+                                  #Max 1e3 REDRIVEs per MAP_RUN
+EVENT_INFO.redriveCount           #MAP_RUN.redriveCount
+EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
+                                  #With EVENT_TYPE MapRunRedriven
 
                                   ┌──────────┐
                                   │   PASS   │
