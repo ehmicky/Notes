@@ -624,6 +624,7 @@ CMACHINE_OPTS.definitionBody      #MACHINE.definition. Can be:
 CCHAINABLE:
   - tree starting at CSTATE and ending with 1|n CCHAINABLEs
   - CSTATE|CCHAIN|CFRAGMENT
+  - for a single MACHINE, i.e. does not include child DMACHINEs from STATE_PARALLEL|MAP
 CCHAINABLE.id 'CONSTRUCT'
 CCHAINABLE.startState CSTATE
 CCHAINABLE.endStates CCHAINABLE_ARR
@@ -631,12 +632,13 @@ CCHAINABLE.endStates CCHAINABLE_ARR
 CSTATE.startState is itself
 CSTATE.endStates is:
   - if terminal (Succeed, Fail): none
+  - if Choice: each CHOICE's endState if .afterwards(), none else
   - else: itself
 CSTATE.next(CCHAINABLE)->CCHAIN
   - DSTATE.Next 'STATE2'
   - if not called: sets DSTATE.End true instead
-  - only with: CustomState, Pass, others???
-     - not with Succeed, Fail
+  - only with: CustomState, Pass, Wait, Parallel, Map, others???
+     - not with Succeed, Fail, Choice
 CCHAIN|CFRAGMENT.next(CCHAINABLE)->CCHAIN2
   - CCHAIN|CFRAGMENT.endStates[*] = CCHAIN|CFRAGMENT.endStates[*].next(CCHAINABLE)
 
@@ -649,9 +651,10 @@ Chain.custom(CSTATE, CCHAINABLE_ARR, CCHAINABLE)->CCHAIN: CSTATE + CCHAINABLE_AR
 CFRAGMENT: custom CCHAINABLE
   - must inherit from StateMachineFragment
   - constructor must set this.startState|endStates
-CFRAGMENT.prefixStates([STR])->CFRAGMENT: calls CSTATE.addPrefix(STR) on all CSTATEs deeply, using CFRAGMENT's CONSTRUCT tree (def STR: 'CONSTRUCT' name)
-
-CCHAIN|CFRAGMENT.toSingleState(???)
+CFRAGMENT.prefixStates([STR])->CFRAGMENT:
+  - prepends STR to 'STATE' name on all CSTATEs deeply
+  - using CFRAGMENT's CONSTRUCT tree
+  - def STR: 'CONSTRUCT: '
 
 State.findReachable[End]States(CSTATE[, OPTS])->CSTATE2_ARR
   - all DSTATE|DCHOICE.Next + DSTATE_CHOICE.Default
@@ -661,6 +664,7 @@ State.findReachable[End]States(CSTATE[, OPTS])->CSTATE2_ARR
 Graph: internal not used directly
 new Graph(CSTATE): add start CSTATE (DMACHINE.StartAt)
   - DefinitionBody.fromChainable() calls it for top-level GRAPH
+  - STATE_PARALLEL|MAP adds one for each child DMACHINE
 GRAPH.registerState(CSTATE): add a DSTATE
   - done automatically for each CSTATE
 GRAPH.registerSuperGraph(PARENT_GRAPH): declare a child DMACHINE
@@ -671,38 +675,38 @@ GRAPH.registerPolicyStatement(CSTATEMENT): allowed to MACHINE.roleArn
 new State(...CARGS, CSTATE_OPTS)
   - base class not used directly
 CSTATE_OPTS.stateName, CSTATE.stateId 'STATE' (def: 'CONSTRUCT' name)
-CSTATE.addPrefix(STR): prepended to 'STATE' name
 CSTATE.toStateJson() -> DSTATE
 CSTATE.validateState(): called at end of construction, for validation
 
 CSTATE_OPTS.comment: DSTATE.Comment
-  - only with Succeed, Fail, Pass, others???
+  - only with Succeed, Fail, Pass, Wait, Choice, Parallel, Map, others???
      - not with CustomState
 
 CSTATE_OPTS.inputPath: DSTATE.InputPath
-  - only with Succeed, Pass, others???
-     - not with CustomState, Fail
+  - only with Succeed, Pass, Choice, Parallel, Map, others???
+     - not with CustomState, Fail, Wait
 
 CSTATE_OPTS.parameters: DSTATE.Parameters
-  - only with Succeed, Pass, others???
-     - not with CustomState, Fail
-  - also applies FieldUtils.renderObject()???
-     - not with Succeed
+  - only with Pass, Parallel, Map, others???
+     - not with CustomState, Succeed, Fail, Wait, Choice
+  - can be a DOEXPR
+     - not with Parallel, DISTRIBUTED Map
 
 CSTATE_OPTS.outputPath: DSTATE.OutputPath
-  - only with Succeed, Pass, others???
-     - not with CustomState, Fail
+  - only with Succeed, Pass, Choice, Parallel, Map, others???
+     - not with CustomState, Fail, Wait
 
 CSTATE_OPTS.resultPath: DSTATE.ResultPath
-  - only with Pass, others???
-     - not with CustomState, Succeed, Fail, Pass
+  - only with Pass, Parallel, Map, others???
+     - not with CustomState, Succeed, Fail, Pass, Wait, Choice
 
 CSTATE_OPTS.resultSelector: DSTATE.ResultSelector
-  - with which???
-     - not with CustomState, Succeed, Fail, Pass
+  - only with Parallel, Map, others???
+     - not with CustomState, Succeed, Fail, Pass, Wait, Choice
+  - can be a DOEXPR
 
 CSTATE.addRetry(CRETRY_OPTS)->CSTATE
-  - only with: CustomState, others???
+  - only with: CustomState, Parallel, Map, others???
 CRETRY_OPTS.errors: DRETRY.ErrorEquals
   - def: ['States.ALL']
   - 'States.ALL' always at the end
@@ -715,7 +719,7 @@ CRETRY_OPTS.jitterStrategy: DRETRY.JitterStrategy
 CRETRY_OPTS.maxDelay: DURATION. DRETRY.MaxDelaySeconds
 
 CSTATE.addCatch(CCHAINABLE[, CCATCH_OPTS])->CSTATE
-  - only with: CustomState, others???
+  - only with: CustomState, Parallel, Map, others???
   - CCHAINABLE.startState is DCATCH.Next
 CCATCH_OPTS.errors: DCATCH.ErrorEquals
   - rest is like CRETRY_OPTS.errors
@@ -745,72 +749,128 @@ CPASS_OPTS.*: CSTATE_OPTS.*
 CPASS_OPTS.result: DSTATE_PASS.Result
   - must be Result.fromString(STR), Result.fromNumber(NUM), Result.fromBoolean(BOOL), Result.fromObject(OBJ), Result.fromArray(ARR)
 
-FieldUtils.renderObject(OBJ)->OBJ
-  - used only internally
-  - for any deep value that is JsonPath|Data|Context.*
-     - value TK -> 'DFEXPR'
-     - key 'KEY' -> 'KEY.$'
+new Wait(...CARGS[, CWAIT_OPTS])
+  - inherits from CSTATE
+  - STATE_WAIT
+CWAIT_OPTS.*: CSTATE_OPTS.*
+CWAIT_OPTS.time:
+  - DPASS.Seconds|Timestamp
+  - must be one of:
+     - WaitTime.timestamp('DATE')
+     - WaitTime.duration(DURATION)
+     - WaitTime.timestampPath('DATE'_CDZEXPR)
+     - WaitTime.secondsPath(NUM_CDZEXPR)
 
-FieldUtils.findReferencedPaths(OBJ)->STR_ARR
-  - used only internally
-  - find any deep value that is JsonPath|Data|Context.*
-  - returns any '$...', including as DFUNC arguments (but not DFUNC itself)
+new Choice(...CARGS[, CCHOICE_OPTS])
+  - inherits from CSTATE
+  - STATE_CHOICE
+CCHOICE_OPTS.*: CSTATE_OPTS.*
+CCHOICE.otherwise(CCHAINABLE)->CCHOICE: DSTATE_CHOICE.Default
+CCHOICE.when(CCOND, CCHAINABLE[, OPTS])->CCHOICE: DCHOICE: Next, Comment (OPTS.Comment), DCOND
+Condition.not(CCOND)->CCOND2: DCOND.Not
+Condition.and|or(CCOND,...)->CCOND2: DCOND.And|Or
+Condition.is[Not]*(CDSEXPR)->CCOND: DCOND.Variable + DCOND.Is* true|false
+Condition.*Equals|Than(CDSEXPR, VAL)->CCOND: DCOND.Variable + DCOND.*Equals|Than
+Condition.*Equals|ThanJsonPath(CDSEXPR, CDZEXPR)->CCOND: DCOND.Variable + DCOND.*Equals|Than
+Condition.stringMatches(CDSEXPR, STR)->CCOND: DCOND.Variable + DCOND.StringMatches
+CCHOICE.afterwards([OPTS])->CCHAIN
+  - endStates are of the ones of DSTATE_CHOICE.Default + every DCHOICE
+     - except ones without possible DSTATE.Next
+  - OPTS.includeErrorHandlers BOOL (def: false): include DCATCH.Next
+  - OPTS.includeOtherwise BOOL (def: false): when CCHAIN.next(CCHAINABLE) called, adds a DSTATE_CHOICE.Default CCHAINABLE
+     - not if DSTATE_CHOICE.Default already exists
 
-JsonPath.DISCARD: null, i.e. no JSONPath
+new Parallel(...CARGS[, CPARALLEL_OPTS])
+  - inherits from CSTATE
+  - STATE_PARALLEL
+CPARALLEL_OPTS.*: CSTATE_OPTS.*
+CPARALLEL.branch(CCHAINABLE,...)->CPARALLEL: DSTATE_PARALLEL.Branches
+CCHAIN.toSingleState(...CARGS[, CPARALLEL_OPTS])->CPARALLEL: turn into a DSTATE_PARALLEL with a single branch
+CFRAGMENT.toSingleState(...CARGS[, CPARALLEL_OPTS])->CPARALLEL: same but also calls CFRAGMENT.prefixStates([CPARALLEL_OPTS.prefixStates])
 
-JsonPath.stringAt('DFEXPR'): STR_TK
-Data.stringAt('DEXPR'): STR_TK
-Context.stringAt('$$...'): STR_TK
-JsonPath|Data.listAt('DEXPR'): ARR_TK
-JsonPath.numberAt('DFEXPR'): NUM_TK
-Data.numberAt('DEXPR'): NUM_TK
-Context.numberAt('$$...'): NUM_TK
-JsonPath.objectAt('DFEXPR'): RV
+C*MAP.itemProcessor(CCHAINABLE)->C*MAP: DSTATE_MAP.ItemProcessor
+C*MAP_OPTS.maxConcurrency[Path]|itemsPath: DSTATE_MAP.*
+C*MAP_OPTS.itemSelector CDOEXPR: DSTATE_MAP.ItemSelector
 
-JsonPath|Data.entirePayload: '$', STR_TK
-JsonPath|Context.entireContext: '$$', STR_TK
+new Map(...CARGS[, CIMAP_OPTS])
+  - inherits from CSTATE
+  - STATE_MAP with DMAP_CONF.Mode 'INLINE'
+CIMAP_OPTS.*: CSTATE_OPTS.*
 
-JsonPath.executionId: '$$.Execution.Id', STR_TK
-JsonPath.executionInput: '$$.Execution.Input', STR_TK
-JsonPath.executionName: '$$.Execution.Name', STR_TK
-JsonPath.executionRoleArn: '$$.Execution.RoleArn', STR_TK
-JsonPath.executionStartTime: '$$.Execution.StartTime', STR_TK
-JsonPath.stateEnteredTime: '$$.State.EnteredTime', STR_TK
-JsonPath.stateName: '$$.State.Name', STR_TK
-JsonPath.stateRetryCount: '$$.State.RetryCount', STR_TK
-JsonPath.stateMachineId: '$$.StateMachine.Id', STR_TK
-JsonPath.stateMachineName: '$$.StateMachine.Name', STR_TK
-JsonPath|Context.taskToken: '$$.Task.Token', STR_TK
+new DistributedMap(...CARGS[, CDMAP_OPTS])
+  - inherits from CSTATE
+  - STATE_MAP with DMAP_CONF.Mode 'DISTRIBUTED'
+CDMAP_OPTS.*: CSTATE_OPTS.*
+CDMAP_OPTS.mapExecutionType: DMAP_CONF.ExecutionType
+CDMAP_OPTS.toleratedFailurePercentage|Count[Path]: DSTATE_MAP.*
+CDMAP_OPTS.label: DSTATE_MAP.*
+CDMAP_OPTS.resultWriter new ResultWriter(OPTS): DSTATE_MAP.ResultWriter
+  OPTS.bucket ICBUCKET: DWRITER_PARAMS.Bucket
+    - ICBUCKET.bucketName can be CDFEXPR
+  OPTS.prefix STR|CDFEXPR: DWRITER_PARAMS.Prefix
+  Automatically allows right PACTIONs as described above
+CDMAP_OPTS.itemReader
+  - calls validateItemReader()???
+CDMAP_OPTS.itemBatcher
+  - calls validateItemBatcher()???
 
-JsonPath.DFUNC(VAL,...):
-  - 'States.DFUNC(...)', STR_TK
-  - DFUNC is camelCase'd
-  - VAL can be:
-     - NUM
-     - STR (surround with single-quotes, \-escapes ' and \)
-     - JsonPath|Data|Context.*
-
-JsonPath.isEncodedJsonPath(STR)->BOOL: if is STR_TK produced by JsonPath|Data|Context.*
-Data.isJsonPathString(STR)->BOOL: same
-
-If any STATE_MAP (including in child MACHINEs) with DMAP_CONF.Mode 'DISTRIBUTED', allows:
+If any CDMAP, allows:
   - to MACHINE.roleArn
   - PACTION states:StartExecution on Resource MACHINE_ARN
   - PACTION states:DescribeExection|StopExecution on Resource MACHINE_ARN:* (i.e. any EXEC in MACHINE)
 
-Validate unique 'STATE' name across MACHINEs
+JsonPath|Data|Context.*:
+  - CD*EXPR
+  - returned as a STR_TK
+  - resolved as 'DSEXPR|DZEXPR|DFEXPR'
+  - can be in an OBJ, for DOEXPR
+     - automatically appends the key with '.$'
+     - must use FieldUtils.renderObject(OBJ)->OBJ internally
+
+FieldUtils.containsTaskToken(OBJ)->BOOL
+  - used only internally, to validate that OBJ contains '$$.Task.Token', when using SERVICE_TASK_PATTERN waitForTaskToken
+
+JsonPath.DISCARD: null, i.e. no JSONPath
+
+Data.stringAt('DSEXPR')
+JsonPath.stringAt('DFEXPR')
+Context.stringAt('$$...')
+
+Data.numberAt('DSEXPR')
+JsonPath.numberAt('DFEXPR')
+Context.numberAt('$$...')
+Data|JsonPath.listAt('DSEXPR')
+JsonPath.objectAt('DFEXPR')
+  - same but as NUM_TK, ARR_TK, RV
+  - see JsonPath.DFUNC() for purpose
+
+JsonPath|Data.entirePayload: '$'
+JsonPath|Context.entireContext: '$$'
+
+JsonPath.execution*: '$$.Execution.*' (no Redrive*)
+JsonPath.state*: '$$.State.*'
+JsonPath.stateMachine*: '$$.StateMachine.*'
+JsonPath|Context.taskToken: '$$.Task.Token'
+
+JsonPath.DFUNC(ARG,...): 'States.DFUNC(...)'
+  - DFUNC is camelCase'd
+  - ARG can be:
+     - a CD*EXPR
+        - if ARG is NUM|ARR|OBJ, must use numberAt|listAt|objectAt(...) (see above)
+     - a direct value
+        - only for NUM|STR, not ARR|OBJ|BOOL
+        - if STR, automatically escapes it
+
+JsonPath.isEncodedJsonPath(STR)->BOOL: if is a CD*EXPR that is a STR_TK
+Data.isJsonPathString(STR)->BOOL: same
 
 CMACHINE_OPTS.comment             #DMACHINE.Comment
                                   #Must use DefinitionBody.fromChainable()
 
 Still to do:
   - each STATE in https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions/lib/states
-  - JSONPath:
-     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/fields.ts
-     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/condition.ts
   - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/input.ts
   - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/task-credentials.ts
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/private/json-path.ts
   - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/state-transition-metrics.ts
 
                                   ┌─────────────────────────┐
@@ -1984,7 +2044,7 @@ DWRITER.Arguments                %
 DWRITER.Parameters               $#DWRITER_PARAMS, as DOEXPR
 DWRITER_PARAMS.Bucket             #'BUCKET'
                                   #Must be in same ACCOUNT|REGION as MACHINE
-DREADER_PARAMS.Prefix             #'PREFIX'. OBJECT prefix
+DWRITER_PARAMS.Prefix             #'PREFIX'. OBJECT prefix
                                   #Where is it written to???
 
 DWRITER_OUTPUT                    #No size limit initial total OUTPUT (can be > 256KB)
