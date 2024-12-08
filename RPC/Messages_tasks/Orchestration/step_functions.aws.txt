@@ -46,6 +46,7 @@ TODO:
      - already done:
         - Starting state machines:
            - Redriving state machines
+           - Redriving map runs
         - Processing input and output:
            - Map state input and output fields in Step Functions
   - add summary
@@ -67,6 +68,10 @@ PAGINATION ==>                    #Uses REQ.maxResults (def 100, max 1000) + REQ
 
 EVENTUAL CONSISTENCY ==>          #Create|update|delete take up to a few minutes
 
+                                  ┌─────────────┐
+                                  │   PRICING   │
+                                  └─────────────┘
+
 PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
                                   #  - free: 4e3
                                   #Express:
@@ -83,7 +88,7 @@ PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
                                   #           - for each child MACHINE run: max(INPUT, OUTPUT)
                                   #        - rounded up by 64MB per EXEC
                                   #  - "EXEC" is either top|child
-                                  #     - i.e. include STEP_ITERs
+                                  #     - i.e. include ITERs
                                   #ENCRYPT: no KMS charge if type 'AWS_OWNED_KEY'
                                   #Recommendations:
                                   #  - Express much cheaper
@@ -91,8 +96,13 @@ PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
                                   #  - with Express, what matters more:
                                   #     - if <= 1s * 64MB: NUM of EXECs
                                   #     - else: duration and memory
-                                  #  - STEP_ITERs can be expensive
+                                  #  - ITERs can be expensive
                                   #  - use BATCHs
+
+EXEC.billingDetails               #EXEC_BILLING
+EXEC_BILLING
+ .billedDurationInMilliseconds    #NUM of ms charged
+EXEC_BILLING.billedMemoryUsedInMB #NUM of MB charged
 
                                   ┌─────────────┐
                                   │   MACHINE   │
@@ -280,7 +290,6 @@ COND_KEY                          #'VERSION_NUM|ALIAS'
 
 MACHINE.type                      #Either 'STANDARD' (def) or 'EXPRESS'
 DMAP_CONF.ExecutionType           #Same but for child MACHINE
-                                  #Not if DMAP_CONF.Mode 'INLINE'
 
 EXCLUSIVE FEATURES ==>            #StartSyncExecution()
                                   #EXEC_BILLING
@@ -290,6 +299,10 @@ MISSING FEATURES ==>              #DescribeStateMachineForExecution()
                                   #StopExecution()
                                   #DescribeExecution() (except if EXEC.mapRunArn set)
                                   #REDRIVE
+                                  #  - not for top-level EXECs: no RedriveExecution()
+                                  #  - but can re-run failed ITERs by passing STATE_MAP_ARN to StartExecution()
+                                  #     - however, already successful STATEs in a failed ITER are re-run
+                                  #ITEM_EXEC
 
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
 
@@ -438,11 +451,9 @@ RedriveExecution()                #Req: REDRIVE
                                   #Res: EXEC
                                   #  - only redriveDate
 
-TODO: move under RETRY???
-
 REDRIVE                           #Retry an EXEC that failed
                                   #For any failure, including timeout
-                                  #Does not repeat previous successful STATEs
+                                  #Does not repeat already successful STATEs
                                   #  - i.e. restart from where it stopped
                                   #Resets timeouts and RETRYs
                                   #Uses the exact same EXEC.* parameters
@@ -460,24 +471,29 @@ EXEC.redriveStatusReason          #STR
                                   #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
 EXEC.redriveFilter                #STR
                                   #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListExecutions.html ???
-EXEC.status                       #Can be 'PENDING_REDRIVE'
+ITEM_EXEC.status                  #Is 'PENDING_REDRIVE' when waiting due to MAP_RUN.maxConcurrency
 
 EVENT_TYPE ExecutionRedriven      #On REDRIVE
-
 EVENT_INFO.redriveCount           #NUM
-                                  #With EVENT_TYPEs ExecutionRedriven and MapRunRedriven
+                                  #With EVENT_TYPE ExecutionRedriven
                                   #Different descriptions in
                                   #https://docs.aws.amazon.com/step-functions/latest/apireference/API_ExecutionRedrivenEventDetails.html#StepFunctions-Type-ExecutionRedrivenEventDetails-redriveCount???
                                   #And
                                   #https://docs.aws.amazon.com/step-functions/latest/apireference/API_MapRunRedrivenEventDetails.html#StepFunctions-Type-MapRunRedrivenEventDetails-redriveCount???
 
-CHILD MACHINES ==>                #REDRIVE includes all STEP_ITERs, which are not repeated if already successful
-                                  #  - unless EXEC failed with States.DataLimitExceeded|Runtime
-                                  #However, cannot target one specific individual STEP_ITER
+ITERS ==>                         #REDRIVE includes all ITERs
+                                  #  - cannot target one specific individual ITER
+                                  #Does not repeat:
+                                  #  - already successful ITERs
+                                  #  - already successful STATEs in a failed ITER
+                                  #  - unless EXEC failed with 'States.DataLimitExceeded|Runtime'
 EVENT_TYPE MapRunRedriven         #When MAP_RUN repeated as part of a REDRIVE
                                   #Max 1e3 REDRIVEs per MAP_RUN
+EVENT_INFO.redriveCount           #NUM. Like above
 EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
                                   #With EVENT_TYPE MapRunRedriven
+
+TODO: move under RETRY???
 
                                   ┌────────────┐
                                   │   EVENTS   │
@@ -698,9 +714,8 @@ TRANSITION                        #Starting a new STATE:
                                   #  - EXEC|REDRIVE: initial STATE
                                   #  - DSTATE|DCHOICE.Next, DSTATE_CHOICE.Default: next STATE
                                   #  - RETRYs
-                                  #For each STEP_ITER, each STATE priced as 1 TRANSITION
-                                  #  - i.e. NUM of STEP_ITERs can multiply the cost
-                                  #  - free: initial STATE for each STEP_ITER, if DMAP_CONF.Mode 'INLINE'
+                                  #For each ITER, each STATE priced as 1 TRANSITION
+                                  #  - i.e. NUM of ITERs can multiply the cost
 
 DSTATE.End                        #BOOL (def: false). End MACHINE successfully
                                   #Continue parent MACHINEs
@@ -944,15 +959,17 @@ DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
 
 DSTATE_PARALLEL.Branches          #DMACHINE_ARR. Required
 
-STEP_ITER                         #Run of a child MACHINE, i.e. either a STATE_PARALLEL branch or a STATE_MAP ITEM
-                                  #When a MACHINE fails, child MACHINEs are terminated
-
 EVENT_TYPE ParallelStateEntered
 EVENT_TYPE ParallelStateExited
 EVENT_TYPE ParallelStateStarted
 EVENT_TYPE ParallelStateSucceeded
 EVENT_TYPE ParallelStateAborted
 EVENT_TYPE ParallelStateFailed    #
+
+ITER                              #Run of a child MACHINE, i.e. either:
+                                  #  - STATE_PARALLEL branch
+                                  #  - STATE_MAP ITEM
+                                  #When a MACHINE fails, child MACHINEs are terminated
 
                                   ┌──────────────┐
                                   │   MAP MAIN   │
@@ -1058,7 +1075,6 @@ DescribeMapRun()                  #Req: MAP_RUN
                                   #Res: MAP_RUN
 
 MAP_RUN                           #STATE_MAP in a given EXEC
-                                  #Not if DMAP_CONF.Mode 'INLINE'
 MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:mapRun:MACHINE/STATE_MAP_LABEL:MAP_RUN_MID'
 MAP_RUN.startDate                 #DATE_NUM
 MAP_RUN.stopDate                  #DATE_NUM
@@ -1126,8 +1142,14 @@ DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
                                   #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
 DMAP_CONF.Mode                    #Either:
                                   #  - 'DISTRIBUTED'
-                                  #  - 'INLINE': cheaper, but max child MACHINEs???
-                                  #      - cannot use BATCH???
+                                  #  - 'INLINE' (def):
+                                  #      - pros:
+                                  #         - initial STATE for each ITER is free
+                                  #      - cons:
+                                  #         - max child MACHINEs???
+                                  #         - no BATCH???
+                                  #         - no MAP_RUN nor ITEM_EXEC
+                                  #         - no DMAP_CONF.ExecutionType
 
 DSTATE_MAP.MaxConcurrency         #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
                                   #Can be 1 for serial
@@ -1464,15 +1486,6 @@ MACHINE
  .tracingConfiguration.enabled    #BOOL (def: false). Enables X-Ray
 
 EXEC.traceHeader                  #STR. X-Ray header
-
-                                  ┌─────────────┐
-                                  │   BILLING   │
-                                  └─────────────┘
-
-EXEC.billingDetails               #EXEC_BILLING
-EXEC_BILLING
- .billedDurationInMilliseconds    #NUM of ms charged
-EXEC_BILLING.billedMemoryUsedInMB #NUM of MB charged
 
                                   ┌────────────────────┐
                                   │   QUERY LANGUAGE   │
