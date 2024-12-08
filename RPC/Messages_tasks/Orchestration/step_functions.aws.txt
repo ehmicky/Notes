@@ -46,7 +46,6 @@ TODO:
      - already done:
         - Processing input and output:
            - Map state input and output fields in Step Functions
-  - https://github.com/awslabs/statelint
   - add summary
   - compare with SWF
 
@@ -56,7 +55,7 @@ TODO:
 
 SERVICE                           #'states'
 SERVICE_DOMAIN                    #'[sync-]states.amazonaws.com'
-                                  #'sync'???
+                                  #'sync' is when using StartSyncExecution()
 
 FORMAT ==>                        #JSON REQ|RES
 
@@ -66,7 +65,32 @@ PAGINATION ==>                    #Uses REQ.maxResults (def 100, max 1000) + REQ
 
 EVENTUAL CONSISTENCY ==>          #Create|update|delete take up to a few minutes
 
-PRICING ==>                       #ENCRYPT: no KMS charge if type 'AWS_OWNED_KEY'
+PRICING ==>                       #Not Express: 1$ per 4e4 TRANSITIONs
+                                  #  - free: 4e3
+                                  #Express:
+                                  #  - 1$ per 1e6 EXECs
+                                  #  - 1$ per 1e6 EXECs with 1s duration and 64MB memory
+                                  #     - proportional to duration
+                                  #        - rounded up by 100ms per EXEC
+                                  #        - 2x cheaper after 1000h, 4x after 5000h
+                                  #     - proportional to memory
+                                  #        - memory is sum of:
+                                  #           - 50MB
+                                  #           - DEFINITION
+                                  #           - max(INPUT, OUTPUT)
+                                  #           - for each nested MACHINE run: max(INPUT, OUTPUT)
+                                  #        - rounded up by 64MB per EXEC
+                                  #  - "EXEC" is either top|child
+                                  #     - i.e. include STEP_ITERs
+                                  #ENCRYPT: no KMS charge if type 'AWS_OWNED_KEY'
+                                  #Recommendations:
+                                  #  - Express much cheaper
+                                  #     - especially if STEPs are fast and use low memory
+                                  #  - with Express, what matters more:
+                                  #     - if <= 1s * 64MB: NUM of EXECs
+                                  #     - else: duration and memory
+                                  #  - STEP_ITERs can be expensive
+                                  #  - use BATCHs
 
                                   ┌─────────────┐
                                   │   MACHINE   │
@@ -127,6 +151,22 @@ EVENT_INFO.roleArn                #STR
 TEST_IN.roleArn                   #STR
 
 PACTION iam:PassRole              #Must be allowed on current PRINCIPAL
+
+                                  ┌──────────────────┐
+                                  │   MACHINE LINT   │
+                                  └──────────────────┘
+
+DIAG_ERROR
+ STATE_MACHINE_NAME_EMPTY         #MACHINE.name must be set
+
+DIAG_ERROR
+ STATE_MACHINE_NAME_TOO_LONG      #MACHINE.name must be <= 80 chars
+
+DIAG_ERROR
+ STATE_MACHINE_NAME_INVALID       #MACHINE.name must be valid
+
+DIAG_ERROR
+ STATE_MACHINE_NAME_ALREADY_EXISTS#MACHINE with same name must not already exists
 
                                   ┌─────────────┐
                                   │   VERSION   │
@@ -237,8 +277,20 @@ COND_KEY                          #'VERSION_NUM|ALIAS|STATE_MAP_LABEL'
                                   └─────────────┘
 
 MACHINE.type                      #Either 'STANDARD' (def) or 'EXPRESS'
+DMAP_CONF.ExecutionType           #Same but for child MACHINE
+                                  #Not if DMAP_CONF.Mode 'INLINE'
 
-DIFFERENCES ==>                   #No DescribeStateMachineForExecution()
+EXCLUSIVE FEATURES ==>            #StartSyncExecution()
+                                  #EXEC_BILLING
+
+MISSING FEATURES ==>              #DescribeStateMachineForExecution()
+                                  #ListExecutions()
+                                  #StopExecution()
+                                  #DescribeExecution() (except if EXEC.mapRunArn set)
+                                  #REDRIVE
+
+DIFFERENCES ==>                   #Creating an EXEC is not idempotent
+
 EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXECUTION:EXPRESS_MID'
 MAP_RUN_EXEC_ARN                  #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXECUTION:EXPRESS_MID'
 
@@ -257,8 +309,21 @@ D*                                #Fields in 'DMACHINE_JSON'
 DMACHINE.Version                  #Always '1.0' (def)
                                   #Only for top-level MACHINE
 
-DMACHINE|DSTATE.Comment           #STR. Description
-                                  #Only for top-level MACHINE
+DMACHINE.Comment                  #STR. Description
+
+                                  ┌─────────────────────┐
+                                  │   DEFINITION LINT   │
+                                  └─────────────────────┘
+
+DIAG_ERROR
+ INVALID_JSON_DESCRIPTION
+statelint                         #DEFINITION must be valid JSON
+
+DIAG_ERROR MISSING_DESCRIPTION    #DEFINITION must not be empty
+
+DIAG_ERROR
+ SCHEMA_VALIDATION_FAILED
+statelint                         #DEFINITION must have no syntax error
 
                                   ┌──────────────┐
                                   │   VALIDATE   │
@@ -269,17 +334,33 @@ ValidateStateMachineDefinition()  #Req: VALIDATE_REQ
 
 VALIDATE_REQ                      #Validate DEFINITION for syntax errors
 VALIDATE_REQ.definition|type      #MACHINE.*
-VALIDATE_REQ.diagnostic           #Minimum DIAGNOSTIC.severity (def: 'ERROR', i.e. no WARNINGs)
+VALIDATE_REQ.diagnostic           #Minimum DIAG.severity (def: 'ERROR', i.e. no WARNINGs)
 
-VALIDATE_RES.result               #'OK' or 'FAIL'. Whether any DIAGNOSTIC with severity 'ERROR'
-VALIDATE_RES.diagnostics          #DIAGNOSTIC_ARR. Paginated
+VALIDATE_RES.result               #'OK' or 'FAIL'. Whether any DIAG with severity 'ERROR'
+
+VALIDATE_RES.diagnostics          #DIAG_ARR. Paginated
                                   #'CODE|MESSAGE' might change in the future, i.e. should not rely on current list
-DIAGNOSTIC.code                   #'DIAGNOSTIC_CODE'
-DIAGNOSTIC.message                #'MESSAGE'
-DIAGNOSTIC.severity               #Either:
+                                  #The full list is documented in this doc
+DIAG.code                         #'DIAG_CODE'
+DIAG.message                      #'MESSAGE'
+DIAG.severity                     #Either:
                                   #  - 'ERROR': prevents Create|UpdateStateMachine()
                                   #  - 'WARNING': does not prevent Create|UpdateStateMachine()
-DIAGNOSTIC.location               #STR. VAR's location, as JSON pointer, e.g. '/States/STATE/Output'
+DIAG.location                     #STR. VAR's location, as JSON pointer, e.g. '/States/STATE/Output'
+
+                                  ┌──────────┐
+                                  │   LINT   │
+                                  └──────────┘
+
+statelint PATH ...                #Validate DEFINITION files
+                                  #Compared to ValidateStateMachineDefinition(), pros:
+                                  #  - run locally, no API calls
+                                  #Cons:
+                                  #  - might be less well maintained
+                                  #  - installed with Ruby
+                                  #Their checks overlap, but they each some unique ones
+                                  #I.e. should use both
+                                  #Version 0.8 (2024-11-21)
 
                                   ┌───────────────┐
                                   │   EXECUTION   │
@@ -311,20 +392,38 @@ StopExecution()                   #Req: EXEC
                                   #Res: EXEC
                                   #  - only stopDate
 
-EXEC                              #Execution of a MACHINE
+EXEC                              #Execute a MACHINE
+                                  #Create is idempotent (if same REQ and another is ongoing)
                                   #Child MACHINEs have child EXECs
 EXEC.executionArn                 #'EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE:EXECUTION'
-EXEC.name                         #'EXEC'
+EXEC.name                         #'EXEC' (def: random UUID)
+                                  #Max 80 chars, [:alnum:]-_
 EXEC.startDate                    #DATE_NUM
 EXEC.stopDate                     #DATE_NUM
 
-EXEC.stateMachineArn              #'MACHINE_ARN'
-EXEC.stateMachineVersionArn       #'VERSION_ARN'
-EXEC.stateMachineAliasArn         #'ALIAS_ARN'
+EXEC.stateMachineArn              #In input: 'MACHINE_QUALIFIED_ARN'
+                                  #In output: 'MACHINE_ARN'
+EXEC.stateMachineVersionArn       #'VERSION_ARN' (if specified)
+EXEC.stateMachineAliasArn         #'ALIAS_ARN' (if specified)
 
-EXEC.status                       #STR
+SYNC EXECUTION ==>                #When using StartSyncExecution()
+                                  #Similar to StartExecution() + waiting for completion + returning DescribeExecution()
+                                  #EXEC.stateMachineArn must be 'MACHINE_ARN', not 'MACHINE_QUALIFIED_ARN'
+                                  #Not logged by CloudTrail
 
-AVAILABLE EVENT_TYPES ==>         #ExecutionStarted ExecutionSucceeded ExecutionAborted ExecutionTimedOut ExecutionFailed
+EXEC.status                       #One of:
+                                  #  - PENDING_REDRIVE
+                                  #  - RUNNING
+                                  #  - SUCCEEDED
+                                  #  - FAILED
+                                  #  - TIMED_OUT
+                                  #  - ABORTED: StopExecution()
+
+EVENT_TYPE ExecutionStarted
+EVENT_TYPE ExecutionSucceeded
+EVENT_TYPE ExecutionFailed
+EVENT_TYPE ExecutionAborted       #
+
 EVENT_INFO.stateMachineAliasArn   #STR
                                   #With EVENT_TYPE ExecutionStarted
 EVENT_INFO.stateMachineVersionArn #STR
@@ -338,16 +437,32 @@ RedriveExecution()                #Req: REDRIVE
                                   #Res: EXEC
                                   #  - only redriveDate
 
-REDRIVE.executionArn              #'EXEC_ARN'
+TODO: move under RETRY???
+
+REDRIVE                           #Retry an EXEC that failed
+                                  #For any failure, including timeout
+                                  #Does not repeat previous successful STATEs nor STEP_ITERs
+                                  #  - i.e. restart from where it stopped
+                                  #Uses the exact same EXEC.* parameters
+                                  #Must have failed in last 14 days
+REDRIVE.executionArn              #'EXEC_ARN'. Same one, i.e. does not create a new EXEC_ARN
 REDRIVE.clientToken               #STR
 
 EXEC|MAP_RUN.redriveCount         #NUM
+                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
 EXEC|MAP_RUN.redriveDate          #DATE_NUM
+                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
 EXEC.redriveStatus                #STR
+                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
 EXEC.redriveStatusReason          #STR
+                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeExecution.html#API_DescribeExecution_ResponseElements ???
 EXEC.redriveFilter                #STR
+                                  #Check again in https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListExecutions.html ???
+EXEC.status                       #Can be 'PENDING_REDRIVE'
 
-AVAILABLE EVENT_TYPES ==>         #ExecutionRedriven MapRunRedriven
+EVENT_TYPE ExecutionRedriven
+EVENT_TYPE MapRunRedriven         #
+
 EVENT_INFO.redriveCount           #NUM
                                   #With EVENT_TYPEs ExecutionRedriven and MapRunRedriven
                                   #Different descriptions in
@@ -364,13 +479,12 @@ GetExecutionHistory()             #Req: EVENTS_REQ
 
 EVENTS_REQ.executionArn           #'EXEC_ARN'
 
+EVENT                             #Max 2.5e4 EVENTs per EXEC
 EVENT.id                          #EVENT_MID. Serial NUM, 1-indexed
 EVENT.previousEventId             #EVENT_MID, if any
 
 EVENT.timestamp                   #DATE_NUM
 EVENTS_REQ.reverseOrder           #BOOL
-
-EVENTS_REQ.includeExecutionData   #BOOL
 
 EVENT.type                        #'EVENT_TYPE' (PascalCase)
                                   #Available ones documented in this doc
@@ -403,8 +517,10 @@ PACTION states:RevealSecrets      #Required for TEST_IN.revealSecrets true
                                   │   INPUT   │
                                   └───────────┘
 
-INPUT                             #VAL (def: {}) passed to each STATE
-                                  #INPUT to first STATE is set by caller, for a given EXEC
+EXEC.input                        #'INPUT_JSON' (def: '{}')
+
+INPUT                             #VAL passed to each STATE
+                                  #INPUT to first STATE is EXEC.input
                                   #INPUT to other STATEs is previous STATE's OUTPUT
                                   #JSON types only
                                   #Max 256KB (else throw ERROR_CODE 'States.DataLimitExceeded')
@@ -421,10 +537,7 @@ DSTATE.InputPath                 $#DSEXPR. Transforms INPUT
 DSTATE.Parameters                $#DOEXPR. Transforms INPUT
                                  $#Done after InputPath
                                  $#Throws ERROR_CODE 'States.ParameterPathFailure' if some DSEXPR does not match
-                                 $#Only with STATE_TASK|MAP|PARALLEL|PASS
-
-EXEC.input                        #STR
-EXEC.inputDetails.included        #BOOL
+                                 $#Only with STATE_TASK|PARALLEL|PASS
 
 TEST_IN.input                     #STR
 TEST_DATA.input                   #STR
@@ -437,12 +550,13 @@ TASK.input                        #STR
 EVENT_INFO.input                  #'JSON'
                                   #Max 260KB
                                   #With EVENT_TYPEs:
-                                  #  - *StateEntered
-                                  #  - ActivityScheduled
                                   #  - ExecutionStarted
+                                  #  - *StateEntered
                                   #  - LambdaFunctionScheduled
+                                  #  - ActivityScheduled
 EVENT_INFO.inputDetails.truncated #BOOL
                                   #With same EVENT_TYPEs as EVENT_INFO.input
+EVENTS_REQ.includeExecutionData   #BOOL (def: true). If false, do not set EVENT_INFO.input*|output*
 
                                   ┌────────────┐
                                   │   OUTPUT   │
@@ -475,8 +589,7 @@ DSTATE.OutputPath                $#DSEXPR. Transforms OUTPUT
                                  $#Done after ResultPath
                                  $#Not with STATE_FAIL
 
-EXEC.output                       #STR
-EXEC.outputDetails.included       #BOOL
+EXEC.output                       #'OUTPUT_JSON'. Not if ERROR_OUTPUT
 
 TEST_OUT.output                   #STR
 TEST_DATA.afterResultPath         #STR
@@ -488,13 +601,14 @@ TASK.output                       #STR
 EVENT_INFO.output                 #'JSON'
                                   #Max 260KB
                                   #With EVENT_TYPEs:
-                                  #  - *StateExited
-                                  #  - ActivitySucceeded
                                   #  - ExecutionSucceeded
+                                  #  - *StateExited
                                   #  - LambdaFunctionSucceeded
+                                  #  - ActivitySucceeded
                                   #  - TaskSubmitted, TaskSucceeded
 EVENT_INFO.outputDetails.truncated#BOOL
                                   #With same EVENT_TYPEs as EVENT_INFO.output
+EVENTS_REQ.includeExecutionData   #BOOL (def: true). If false, do not set EVENT_INFO.input*|output*
 
                                   ┌─────────────┐
                                   │   CONTEXT   │
@@ -542,25 +656,47 @@ EVENT_INFO
                                   └───────────┘
 
 DMACHINE.States.STATE             #DSTATE. Like `case` in a `switch` statement
+                                  #Child STATEs cannot reuse same name
                                   #'STATE' name max 80 chars
+                                  #Required
 
-DSTATE.Type                       #'STATE_TYPE'
+DSTATE.Type                       #'STATE_TYPE'. Required
 DSTATE_*.*                        #STATE_TYPE-specific, e.g. DSTATE_CHOICE.Default
+
+DSTATE.Comment                    #STR. Description
+
+                                  ┌────────────────┐
+                                  │   STATE LINT   │
+                                  └────────────────┘
+
+DIAG_ERROR DUPLICATE_STATE_NAME
+statelint                         #Child STATEs must not reuse same names
+
+DIAG_ERROR INVALID_STATE_NAME     #'STATE' name must be valid
 
                                   ┌──────────┐
                                   │   FLOW   │
                                   └──────────┘
 
 DMACHINE.StartAt                  #'STATE'. First STATE
+                                  #Required
 
 DSTATE.Next                       #'STATE'. Next STATE
                                   #Cannot target a 'STATE' in parent|child MACHINEs
-                                  #Together with DCHOICE.Next, called "transition"
+                                  #Not with STATE_PASS|FAIL|CHOICE, or if DSTATE.End true. Required otherwise
+
+TRANSITION                        #Starting a new STATE:
+                                  #  - EXEC|REDRIVE: initial STATE
+                                  #  - DSTATE|DCHOICE.Next, DSTATE_CHOICE.Default: next STATE
+                                  #  - RETRYs
+                                  #For each STEP_ITER, each STATE priced as 1 TRANSITION
+                                  #  - i.e. NUM of STEP_ITERs can multiply the cost
+                                  #  - free: initial STATE for each STEP_ITER, if DMAP_CONF.Mode 'INLINE'
 
 DSTATE.End                        #BOOL (def: false). End MACHINE successfully
                                   #Continue parent MACHINEs
                                   #Not with STATE_CHOICE|SUCCEED|FAIL
-                                  #Together with STATE_SUCCEED|FAIL, called "terminal state" (of a MACHINE)
+                                  #Together with STATE_SUCCEED|FAIL, called "terminal STATE" (of a MACHINE)
 
 DSTATE.Type                       #'Succeed'. STATE is STATE_SUCCEED
                                   #End MACHINE successfully
@@ -568,7 +704,21 @@ DSTATE.Type                       #'Succeed'. STATE is STATE_SUCCEED
 
 TEST_OUT.nextState                #STR
 
-AVAILABLE EVENT_TYPES ==>         #SucceedStateEntered SucceedStateExited
+EVENT_TYPE SucceedStateEntered
+EVENT_TYPE SucceedStateExited     #
+
+                                  ┌───────────────┐
+                                  │   FLOW LINT   │
+                                  └───────────────┘
+
+DIAG_ERROR
+ MISSING_TRANSITION_TARGET
+statelint                         #DSTATE.Next must point to existing 'STATE'
+
+statelint                         #Every 'STATE' must be a target for a transition from another one
+
+DIAG_ERROR MISSING_END_STATE
+statelint                         #>= 1 terminal STATE
 
                                   ┌────────────┐
                                   │   CHOICE   │
@@ -582,12 +732,22 @@ DSTATE_CHOICE.Default             #'STATE'
 
 DSTATE_CHOICE.Choices             #DCHOICE_ARR
                                   #Cannot be empty
+DCHOICE.Comment                   #STR. Description
 DCHOICE.Next                      #Like DSTATE.Next. Required
 
 DCHOICE.Assign                    #Like DSTATE_CHOICE.Assign
                                   #DSTATE_CHOICE.Assign is not used if any DCHOICE matches (even if it has no DCHOICE.Assign)
 
-AVAILABLE EVENT_TYPES ==>         #ChoiceStateEntered ChoiceStateExited
+EVENT_TYPE ChoiceStateEntered
+EVENT_TYPE ChoiceStateExited      #
+
+                                  ┌─────────────────┐
+                                  │   CHOICE LINT   │
+                                  └─────────────────┘
+
+DIAG_ERROR
+ MISSING_TRANSITION_TARGET
+statelint                         #DSTATE_CHOICE.Default and DCHOICE.Next must point to existing 'STATE'
 
                                   ┌───────────────┐
                                   │   CONDITION   │
@@ -637,20 +797,14 @@ ERROR                             #STATEs can throw ERRORs
                                   #When ERROR reaches top-level MACHINE, ends it with failure, using ERROR as OUTPUT
 
 ERROR_OUTPUT                      #On error, used as OUTPUT
-ERROR_OUTPUT.Error                #'ERROR_CODE'
+ERROR_OUTPUT.Error                #'ERROR_CODE'. Can be undefined
                                   #'States.*' reserved, i.e. should not use inside STATE_TASK
-ERROR_OUTPUT.Cause                #'MESSAGE'
+                                  #Max 256 chars
+ERROR_OUTPUT.Cause                #'MESSAGE'. Can be undefined
+                                  #Max 32KB
 
-DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
-                                  #End MACHINE with failure, including parent ones
-                                  #OUTPUT is ERROR_OUTPUT
-DSTATE.Error                      #'ERROR_CODE'[_DZEXPR] (def: ???). ERROR_OUTPUT.Error
-DSTATE.Cause                      #'MESSAGE'[_DZEXPR] (def: none). ERROR_OUTPUT.Cause
-
-AVAILABLE EVENT_TYPES ==>         #FailStateEntered
-
-EXEC.error                        #STR
-EXEC.cause                        #STR
+EXEC.error
+EXEC.cause                        #ERROR_OUTPUT.*
 
 TEST_OUT.error                    #STR
 TEST_OUT.cause                    #STR
@@ -666,12 +820,25 @@ EVENT_INFO.error                  #STR
 EVENT_INFO.cause                  #STR
                                   #With same EVENT_TYPEs as EVENT_INFO.error
 
+                                  ┌──────────┐
+                                  │   FAIL   │
+                                  └──────────┘
+
+DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
+                                  #End MACHINE with failure, including parent ones
+                                  #OUTPUT is ERROR_OUTPUT
+DSTATE.Error                      #'ERROR_CODE'[_DZEXPR] (def: none). ERROR_OUTPUT.Error
+DSTATE.Cause                      #'MESSAGE'[_DZEXPR] (def: none). ERROR_OUTPUT.Cause
+
+EVENT_TYPE FailStateEntered       #
+
                                   ┌───────────┐
                                   │   CATCH   │
                                   └───────────┘
 
 DSTATE.Catch                      #DCATCH_ARR. On error, execute some logic
                                   #Only with STATE_TASK|MAP|PARALLEL
+DCATCH.Comment                    #STR. Description
 DCATCH.Next                       #Like DSTATE.Next. Required
 
 DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
@@ -716,7 +883,9 @@ DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
                                   │   TIMEOUT   │
                                   └─────────────┘
 
-DMACHINE.TimeoutSeconds           #NUM (def: none). After NUMs, throw ERROR_CODE 'States.Timeout'
+DMACHINE.TimeoutSeconds           #NUM (def: none). Timeout for an EXEC
+                                  #After NUMs, throw ERROR_CODE 'States.Timeout'
+                                  #On REDRIVE, timeout is restarted
                                   #Only for top-level MACHINE
 DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 60). Same but on STATE_TASK
 
@@ -730,6 +899,10 @@ EVENT_INFO.timeoutInSeconds       #NUM
 EVENT_INFO.heartbeatInSeconds     #NUM
                                   #With EVENT_TYPEs ActivityScheduled and TaskScheduled
 
+EXEC.status                       #Can be 'TIMED_OUT'
+
+EVENT_TYPE ExecutionTimedOut      #
+
                                   ┌──────────┐
                                   │   PASS   │
                                   └──────────┘
@@ -741,7 +914,15 @@ DSTATE_PASS.Output               %#OUTPUT_DOEXPR (def: INPUT). Transforms OUTPUT
 DSTATE_PASS.Result               $#OUTPUT (def: INPUT). Sets OUTPUT
                                  $#Cannot use DSEXPR|DFUNCs
 
-AVAILABLE EVENT_TYPES ==>         #PassStateEntered PassStateExited
+EVENT_TYPE PassStateEntered
+EVENT_TYPE PassStateExited        #
+
+                                  ┌───────────────┐
+                                  │   PASS LINT   │
+                                  └───────────────┘
+
+DIAG_WARNING
+ PASS_RESULT_IS_STATIC            #Must not use DSEXPR in DSTATE_PASS.Result
 
                                   ┌──────────────┐
                                   │   PARALLEL   │
@@ -753,10 +934,16 @@ DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
                                   #If any child MACHINE throws, other childs are terminated
                                   #On error, throws ERROR_CODE 'States.BranchFailed'
 
-DSTATE_PARALLEL.Branches          #DMACHINE_ARR
+DSTATE_PARALLEL.Branches          #DMACHINE_ARR. Required
 
-AVAILABLE EVENT_TYPES ==>         #ParallelStateEntered ParallelStateExited ParallelStateStarted ParallelStateSucceeded
-                                  #ParallelStateAborted ParallelStateFailed
+STEP_ITER                         #Run of a nested MACHINE, i.e. either a STATE_PARALLEL branch or a STATE_MAP ITEM
+
+EVENT_TYPE ParallelStateEntered
+EVENT_TYPE ParallelStateExited
+EVENT_TYPE ParallelStateStarted
+EVENT_TYPE ParallelStateSucceeded
+EVENT_TYPE ParallelStateAborted
+EVENT_TYPE ParallelStateFailed    #
 
                                   ┌──────────────┐
                                   │   MAP MAIN   │
@@ -765,13 +952,38 @@ AVAILABLE EVENT_TYPES ==>         #ParallelStateEntered ParallelStateExited Para
 DSTATE.Type                       #'Map'. STATE is STATE_MAP
                                   #Executes one child MACHINEs per ITEM_ARR, in parallel
                                   #OUTPUT is ARR of their OUTPUTs
-                                  #Order is:
-                                 %#  - Arguments -> ItemReader -> Items -> ItemSelector -> ItemBatcher
-                                 $#  - InputPath -> ItemReader -> ItemsPath -> ItemSelector -> ItemBatcher
 
 DSTATE_MAP.Label                  #'STATE_MAP_LABEL' (def: random ID). STATE_MAP name
                                   #Use by executor, as opposed to 'STATE' which is used inside DEFINITION
+                                  #Must be unique per MACHINE
                                   #Max 40 chars, [:alnum:]-_
+
+EVENT_TYPE MapStateEntered
+EVENT_TYPE MapStateExited
+EVENT_TYPE MapStateStarted
+EVENT_TYPE MapStateSucceeded
+EVENT_TYPE MapStateAborted
+EVENT_TYPE MapStateFailed         #
+
+EVENT_INFO.length                 #NUM
+                                  #With EVENT_TYPE MapStateStarted
+
+                                  ┌───────────────────┐
+                                  │   MAP MAIN LINT   │
+                                  └───────────────────┘
+
+DIAG_ERROR DUPLICATE_LABEL_NAME   #'STATE_MAP_LABEL' must be unique per MACHINE
+
+DIAG_ERROR INVALID_LABEL_NAME     #'STATE_MAP_LABEL' must be valid
+
+DIAG_ERROR TOO_DEEPLY_NESTED      #Must be hit child STATE max depth (which is it???)
+
+                                  ┌───────────────────┐
+                                  │   MAP ITERATION   │
+                                  └───────────────────┘
+
+ORDER ==>                        %#Arguments -> ItemReader -> Items -> ItemSelector -> ItemBatcher
+                                 $#InputPath -> ItemReader -> ItemsPath -> ItemSelector -> ItemBatcher
 
 DSTATE_MAP.ItemProcessor          #DMACHINE, performed on each ITEM
 STATE_MAP_ARN                     #'MACHINE_ARN/STATE_MAP_LABEL'. DMACHINE of a STATE_MAP
@@ -797,9 +1009,16 @@ DSTATE_MAP.**                     #In any DZEXPR|DOEXPR, does not use ITEM_ARR, 
                                  $#  - $ is INPUT
                                  $#     - i.e. uses only DSTATE_MAP.InputPath's result
 
-AVAILABLE EVENT_TYPES ==>         #MapStateEntered MapStateExited MapStateStarted MapStateSucceeded MapStateAborted MapStateFailed
-EVENT_INFO.length                 #NUM
-                                  #With EVENT_TYPE MapStateStarted
+EVENT_TYPE MapIterationStarted
+EVENT_TYPE MapIterationSucceeded
+EVENT_TYPE MapIterationAborted
+EVENT_TYPE MapIterationFailed     #
+
+EVENT_INFO.index                  #NUM
+                                  #With EVENT_TYPEs MapIteration*
+EVENT_INFO.name                   #'STATE'
+                                  #Max 80 chars, [:alnum:]-_
+                                  #With EVENT_TYPEs MapIteration*, *StateEntered, *StateExited
 
                                   ┌────────────────┐
                                   │   MAP CONFIG   │
@@ -811,9 +1030,10 @@ MAP_RUN.toleratedFailurePercentage#NUM
 
 DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
                                   #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
-DMAP_CONF.Mode                    #'INLINE' or 'DISTRIBUTED'???
-DMAP_CONF.ExecutionType           #'STANDARD' (def) or 'EXPRESS'???
-                                  #Only if DMAP_CONF.Mode 'DISTRIBUTED'
+DMAP_CONF.Mode                    #Either:
+                                  #  - 'DISTRIBUTED'
+                                  #  - 'INLINE': cheaper, but max child MACHINEs???
+                                  #      - cannot use BATCH???
 
 DSTATE_MAP.MaxConcurrency         #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
                                   #Can be 1 for serial
@@ -835,6 +1055,7 @@ DSTATE_MAP.ItemBatcher            #DBATCH. Pass BATCHs to each MACHINE, i.e. gro
                                   #INPUT becomes {Items ITEM_ARR, BatchInput VAL}
                                   #OUTPUT is ARR of each MACHINE's OUTPUT, i.e. one output element per BATCH
                                   #Def: no BATCHs
+                                  #Goal: reduce cost (price, Lambda startup, etc.) associated with high NUM of ITEMs
 
 DBATCH.MaxItemsPerBatch           #Max NUM[_DZEXPR] of ITEMs per BATCH
 DBATCH.MaxInputBytesPerBatch      #Max NUM[_DZEXPR] (in bytes, def|max 256KB) total size per BATCH
@@ -859,6 +1080,7 @@ DescribeMapRun()                  #Req: MAP_RUN
                                   #  - only mapRunArn
                                   #Res: MAP_RUN
 DescribeStateMachineForExecution()#Also returns mapRunArn (see above), if a child EXEC_ARN is passed
+ListExecutions()                  #Can list child EXECs by passing EXEC.mapRunArn
 
 MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:mapRun:MACHINE/STATE_MAP_LABEL:MAP_RUN_MID'
 MAP_RUN.startDate                 #DATE_NUM
@@ -869,9 +1091,9 @@ MAP_RUN.status                    #STR
 MAP_RUN.stateMachineArn           #'MACHINE_ARN'
 MAP_RUN.executionArn              #'EXEC_ARN'
 EXEC.mapRunArn                    #'MAP_RUN_ARN'
-EXEC.itemCount                    #NUM
-MAP_RUN_EXEC_ARN                  #'EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE/STATE_MAP_LABEL:EXECUTION'???
+MAP_RUN_EXEC_ARN                  #'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE/STATE_MAP_LABEL:EXECUTION'???
 
+EXEC.itemCount                    #Total NUM of ITEMs
 MAP_RUN.executionCounts           #MAP_COUNT
 MAP_RUN.itemCounts                #MAP_COUNT
 MAP_COUNT.aborted                 #NUM
@@ -885,20 +1107,27 @@ MAP_COUNT.succeeded               #NUM
 MAP_COUNT.timedOut                #NUM
 MAP_COUNT.total                   #NUM
 
-AVAILABLE EVENT_TYPES ==>         #MapRunStarted MapRunSucceeded MapRunAborted MapRunFailed
+EVENT_TYPE MapRunStarted
+EVENT_TYPE MapRunSucceeded
+EVENT_TYPE MapRunAborted
+EVENT_TYPE MapRunFailed           #
+
 EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
                                   #With EVENT_TYPEs MapRunStarted and MapRunRedriven
 
-                                  ┌───────────────────┐
-                                  │   MAP ITERATION   │
-                                  └───────────────────┘
+                                  ┌──────────────────┐
+                                  │   MAP RUN AUTH   │
+                                  └──────────────────┘
 
-AVAILABLE EVENT_TYPES ==>         #MapIterationStarted MapIterationSucceeded MapIterationAborted MapIterationFailed
-EVENT_INFO.index                  #NUM
-                                  #With EVENT_TYPEs MapIteration*
-EVENT_INFO.name                   #'STATE'
-                                  #Max 80 chars, [:alnum:]-_
-                                  #With EVENT_TYPEs MapIteration*, *StateEntered, *StateExited
+EXEC_ARN                          #Used as Resource for ListMapRuns()
+
+EXEC_ARN                          #Used as Resource for
+
+MAP_RUN_ARN                       #Used as Resource for UpdateMapRun|DescribeMapRun()
+                                  #Also for ListExecutions() if EXEC.mapRunArn set
+*Execution* (EXEC, REDRIVE, EVENTs)
+  - STATE_MAP_ARN as MACHINE_QUALIFIED_ARN
+  - + ListMapRuns() always
 
                                   ┌─────────────────┐
                                   │   MAP S3 READ   │
@@ -1005,9 +1234,12 @@ DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
                                   #Wait for a specific duration
 
 DSTATE_WAIT.Timestamp             #'DATE'[_DZEXPR]
+                                  #If in the past, no wait
 DSTATE_WAIT.Seconds               #NUM[_DZEXPR]. Alternative to Timestamp
 
-AVAILABLE EVENT_TYPES ==>         #WaitStateEntered WaitStateExited WaitStateAborted
+EVENT_TYPE WaitStateEntered
+EVENT_TYPE WaitStateExited
+EVENT_TYPE WaitStateAborted       #
 
                                   ┌──────────┐
                                   │   TASK   │
@@ -1019,8 +1251,17 @@ DSTATE.Type                       #'Task'. STATE is STATE_TASK
                                   #  - 'States.TaskFailed': else
 
 DSTATE_TASK.Resource              #'ARN'. Available ones documented below
+                                  #Required
 
-AVAILABLE EVENT_TYPES ==>         #TaskSubmitted TaskSubmitFailed TaskScheduled TaskStarted TaskStartFailed TaskSucceeded TaskTimedOut TaskFailed
+EVENT_TYPE TaskSubmitted
+EVENT_TYPE TaskSubmitFailed
+EVENT_TYPE TaskScheduled
+EVENT_TYPE TaskStarted
+EVENT_TYPE TaskStartFailed
+EVENT_TYPE TaskSucceeded
+EVENT_TYPE TaskTimedOut
+EVENT_TYPE TaskFailed             #
+
 EVENT_INFO.resource               #STR
                                   #With EVENT_TYPEs Task* (except TaskState*)
 EVENT_INFO.resourceType           #STR
@@ -1030,7 +1271,9 @@ EVENT_INFO.parameters             #STR
 EVENT_INFO.region                 #STR
                                   #With EVENT_TYPE TaskScheduled
 
-AVAILABLE EVENT_TYPES ==>         #TaskStateEntered TaskStateExited TaskStateAborted
+EVENT_TYPE TaskStateEntered
+EVENT_TYPE TaskStateExited
+EVENT_TYPE TaskStateAborted       #
 
                                   ┌───────────────┐
                                   │   TASK AUTH   │
@@ -1041,6 +1284,12 @@ DCREDS.RoleArn                    #'ROLE_ARN' assumed by Resource
 
 EVENT_INFO.taskCredentials.roleArn#'ROLE_ARN'
                                   #With EVENT_TYPEs LambdaFunctionScheduled and TaskScheduled
+
+                                  ┌───────────────┐
+                                  │   TASK LINT   │
+                                  └───────────────┘
+
+DIAG_ERROR INVALID_RESOURCE       #DSTATE_TASK.Resource must be valid
 
                                   ┌──────────────┐
                                   │   ACTIVITY   │
@@ -1065,7 +1314,13 @@ ACTIVITY.activityArn              #'ACTIVITY_ARN'. 'arn:aws:states:REGION:ACCOUN
 ACTIVITY.name                     #'ACTIVITY'
 ACTIVITY.creationDate             #DATE_NUM
 
-AVAILABLE EVENT_TYPES ==>         #ActivityScheduled ActivityScheduleFailed ActivityStarted ActivitySucceeded ActivityTimedOut ActivityFailed
+EVENT_TYPE ActivityScheduled
+EVENT_TYPE ActivityScheduleFailed
+EVENT_TYPE ActivityStarted
+EVENT_TYPE ActivitySucceeded
+EVENT_TYPE ActivityTimedOut
+EVENT_TYPE ActivityFailed         #
+
 EVENT_INFO.resource               #STR
                                   #With EVENT_TYPE ActivityScheduled
 EVENT_INFO.workerName             #STR
@@ -1099,8 +1354,16 @@ TASK_GET.workerName               #
 
 DSTATE_TASK.Resource              #'FUNC_ARN': run Lambda FUNCTION, with INPUT|OUTPUT as REQ|RES
 
-AVAILABLE EVENT_TYPES ==>         #LambdaFunctionScheduled LambdaFunctionScheduleFailed LambdaFunctionStarted
-                                  #LambdaFunctionStartFailed LambdaFunctionSucceeded LambdaFunctionTimedOut LambdaFunctionFailed
+EVENT_TYPE LambdaFunctionScheduled
+EVENT_TYPE
+ LambdaFunctionScheduleFailed
+EVENT_TYPE LambdaFunctionStarted
+EVENT_TYPE
+ LambdaFunctionStartFailed
+EVENT_TYPE LambdaFunctionSucceeded
+EVENT_TYPE LambdaFunctionTimedOut
+EVENT_TYPE LambdaFunctionFailed   #
+
 EVENT_INFO.resource               #STR
                                   #With EVENT_TYPE LambdaFunctionScheduled
 
@@ -1133,6 +1396,7 @@ PACTION states:InvokeHTTPEndpoint #???
                                   └────────────────┘
 
 MACHINE.encryptionConfiguration   #ENCRYPT. Encrypts 'DMACHINE_JSON' and EVENTs at rest
+                                  #Also encrypts EXEC.input|output and (unless undefined) EXEC.error|cause
 ACTIVITY.encryptionConfiguration  #ENCRYPT
 
 ENCRYPT.type                      #Either:
@@ -1145,7 +1409,9 @@ ENCRYPT
 
 MACHINE_GET.includedData          #Whether to return MACHINE.definition: 'ALL_DATA' (yes, def) or 'METADATA_ONLY' (no)
                                   #Meant when ENCRYPT.kmsKeyId used and caller does not have KMS permission
-EXEC_GET.includedData             #STR
+EXEC_GET.includedData             #Same but with EXEC.input|output
+EXEC.inputDetails|outputDetails
+ .included                        #Same as BOOL
 
                                   ┌─────────────┐
                                   │   LOGGING   │
@@ -1168,7 +1434,7 @@ MACHINE_LOGGING
 MACHINE
  .tracingConfiguration.enabled    #BOOL (def: false). Enables X-Ray
 
-EXEC.traceHeader                  #STR
+EXEC.traceHeader                  #STR. X-Ray header
 
                                   ┌─────────────┐
                                   │   BILLING   │
@@ -1176,8 +1442,8 @@ EXEC.traceHeader                  #STR
 
 EXEC.billingDetails               #EXEC_BILLING
 EXEC_BILLING
- .billedDurationInMilliseconds    #NUM
-EXEC_BILLING.billedMemoryUsedInMB #NUM
+ .billedDurationInMilliseconds    #NUM of ms charged
+EXEC_BILLING.billedMemoryUsedInMB #NUM of MB charged
 
                                   ┌────────────────────┐
                                   │   QUERY LANGUAGE   │
@@ -1190,7 +1456,8 @@ DMACHINE.QueryLanguage            #'JSONPath' (def) or 'JSONata'
 DSTATE.QueryLanguage              #'JSONPath|JSONata'. Override for a given STATE
                                   #Not inherited by child MACHINEs
 
-AVAILABLE EVENT_TYPES ==>         #EvaluationFailed
+EVENT_TYPE EvaluationFailed       #
+
 EVENT_INFO.location               #STR
                                   #With EVENT_TYPE EvaluationFailed
 EVENT_INFO.state                  #STR
@@ -1215,6 +1482,12 @@ $states.*                        %#Special DVARs, documented below
                                  %#  - but can use nested implicit|explicit $
                                  %#     - e.g. $states.input[VAR = true] or $states.input[$.VAR = true]
 
+                                  ┌──────────────────┐
+                                  │   JSONATA LINT   │
+                                  └──────────────────┘
+
+statelint                        %#Currently ignores JSONata fields, i.e. does not lint them, but does not fail either
+
                                   ┌──────────────┐
                                   │   JSONPATH   │
                                   └──────────────┘
@@ -1238,6 +1511,18 @@ DFEXPR                           $#DSEXPR or 'DFUNC(...)'
 DOEXPR                           $#"Payload template". OBJ where top|nested PROPs:
                                  $#  - value can be DFEXPR
                                  $#  - providing key is 'PROP.$' (which becomes 'PROP')
+
+                                  ┌───────────────────┐
+                                  │   JSONPATH LINT   │
+                                  └───────────────────┘
+
+statelint                        $#Valid JSONPath in DSEXPR|DZEXPR|DFEXPR (not inside DOEXPR)
+
+DIAG_WARNING NO_PATH
+statelint                        $#If VAL is DZEXPR, key must be appended with 'Path'
+
+DIAG_WARNING NO_DOLLAR
+statelint                        $#DOEXPR key must be 'PROP.$' if value is DFEXPR
 
                                   ┌───────────────────────┐
                                   │   INTRISIC FUNCTION   │
