@@ -214,24 +214,6 @@ MACHINE.status                    #'ACTIVE' or 'DELETING'
 WORKFLOW STUDIO ==>               #UI to view|edit a MACHINE, as a graph
                                   #Can create|deploy as a CloudFormation STACK
 
-                                  ┌──────────────────┐
-                                  │   MACHINE AUTH   │
-                                  └──────────────────┘
-
-MACHINE|TEST_IN.roleArn           #'ROLE_ARN'. Required
-
-EVENT_INFO.roleArn                #'ROLE_ARN'
-                                  #With EVENT_TYPE ExecutionStarted
-
-PACTION iam:PassRole              #Must be allowed on current PRINCIPAL
-
-                                  ┌─────────────────────┐
-                                  │   MACHINE AUTH UI   │
-                                  └─────────────────────┘
-
-ROLE 'service-role
- /StatesExecutionRole*'           #Created by Workflow studio for common MACHINE.roleArn use cases
-
                                   ┌─────────────────┐
                                   │   MACHINE API   │
                                   └─────────────────┘
@@ -271,8 +253,13 @@ DeleteStateMachine()              #Req: MACHINE
                                   │   MACHINE IAC   │
                                   └─────────────────┘
 
-AWS::StepFunctions::StateMachine  #RESPROPs: StateMachineName, RoleArn
+AWS::StepFunctions::StateMachine  #RESPROPs: StateMachineName
                                   #RESATTRs: Arn, Name
+
+new StateMachine
+ (...CARGS, CMACHINE_OPTS)
+ ->CMACHINE                       #
+CMACHINE_OPTS.stateMachineName    #MACHINE.name
 
                                   ┌──────────────────────┐
                                   │   MACHINE COMPOSER   │
@@ -304,6 +291,38 @@ DIAG_ERROR
                                   └─────────────────────┘
 
 MACHINE CRUD ==>                  #Can be done in "Explorer"
+
+                                  ┌──────────────────┐
+                                  │   MACHINE ROLE   │
+                                  └──────────────────┘
+
+MACHINE|TEST_IN.roleArn           #'ROLE_ARN'. Required
+                                  #Must be assumable by Principal.Service 'states.amazonaws.com'
+
+EVENT_INFO.roleArn                #'ROLE_ARN'
+                                  #With EVENT_TYPE ExecutionStarted
+
+                                  ┌───────────────────────┐
+                                  │   MACHINE ROLE AUTH   │
+                                  └───────────────────────┘
+
+PACTION iam:PassRole              #Must be allowed on current PRINCIPAL
+
+                                  ┌─────────────────────┐
+                                  │   MACHINE ROLE UI   │
+                                  └─────────────────────┘
+
+ROLE 'service-role
+ /StatesExecutionRole*'           #Created by Workflow studio for common MACHINE.roleArn use cases
+
+                                  ┌──────────────────────┐
+                                  │   MACHINE ROLE IAC   │
+                                  └──────────────────────┘
+
+AWS::StepFunctions::StateMachine  #RESPROPs: RoleArn
+
+CMACHINE[_OPTS].role              #ICROLE. MACHINE.roleArn
+                                  #Def: new one assumable by Principal.Service 'states.amazonaws.com'
 
                                   ┌─────────────┐
                                   │   VERSION   │
@@ -523,6 +542,8 @@ ITEM_EXEC_ARN                     #'arn:aws:states:REGION:ACCOUNT_ID:express:MAC
                                   └─────────────────┘
 
 AWS::StepFunctions::StateMachine  #Includes RESPROPs: StateMachineType
+
+CMACHINE[_OPTS].stateMachineType  #MACHINE.type
 
                                   ┌────────────────┐
                                   │   DEFINITION   │
@@ -2095,7 +2116,7 @@ SendTaskFailure()                 #Req: ACTIVITY_TASK
                                   │   TASK ACTIVITY RUN IAC   │
                                   └───────────────────────────┘
 
-ACTIVITY.grant
+CACTIVITY.grant
  (YGRANTABLE, 'PACTION',...)
  ->CGRANT                         #Allow PACTION on Resource ACTIVITY_ARN
 
@@ -2114,6 +2135,16 @@ AWS/States/ActivitiesFailed       #NUM of ACTIVITY_TASKs failed
 
 DVAR ActivityArn                  #'ACTIVITY_ARN'. With AWS/States/Activit*
                                   #ACTIVITY is also a TELEMETRY_ENTITY
+
+                                  ┌───────────────────────────────────┐
+                                  │   TASK ACTIVITY RUN METRICS IAC   │
+                                  └───────────────────────────────────┘
+
+CACTIVITY.metric
+ ('METRIC'[, CMETRIC_OPTS])
+ ->CMETRIC                        #Sets DVAR ActivityArn, statistic 'Sum'
+CACTIVITY.metricMETRIC            #Same except 'METRIC' omits 'Activity' prefix, e.g. CACTIVITY.metricRunTime()
+ ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for ActivityRuntime|ActivityScheduleTime
 
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
@@ -2141,9 +2172,12 @@ EXEC.inputDetails|outputDetails
                                   │   ENCRYPTION AUTH   │
                                   └─────────────────────┘
 
-PACTION                           #If ENCRYPT.kmsKeyId, must be allowed:
- kms:Decrypt|GenerateDataKey      #  - on KEY
-                                  #  - for Principal.Service 'states.amazonaws.com'
+PACTION                           #If ENCRYPT.kmsKeyId, must be allowed on Resource KEY
+ kms:Decrypt|GenerateDataKey      #For MACHINE:
+                                  #  - Principal is MACHINE.roleArn
+                                  #  - COND_KEY kms:EncryptionContext:aws:states:stateMachineArn MACHINE_ARN
+                                  #For ACTIVITY:
+                                  #  - Principal.Service 'states.amazonaws.com'
                                   #  - COND_KEY kms:EncryptionContext:aws:states:activityArn ACTIVITY_ARN
 
                                   ┌────────────────────┐
@@ -2153,9 +2187,10 @@ PACTION                           #If ENCRYPT.kmsKeyId, must be allowed:
 AWS::StepFunctions::
  StateMachine|Activity            #Includes RESPROPs: EncryptionConfiguration
 
-DACTIVITY[_OPTS]                  #ENCRYPT. Can be:
- .encryptionConfiguration         #  - new AwsOwnedEncryptionConfiguration()
-                                  #  - new CustomerManagedEncryptionConfiguration(IKEY[, DURATION])
+CMACHINE.encryptionConnfiguration #ENCRYPT. Can be:
+CACTIVITY[_OPTS]                  #  - new AwsOwnedEncryptionConfiguration()
+ .encryptionConfiguration         #  - new CustomerManagedEncryptionConfiguration(IKEY[, DURATION])
+                                  #Automatically allows kms:* as described above
 
                                   ┌─────────────┐
                                   │   LOGGING   │
@@ -2184,7 +2219,7 @@ EVENT_INFO.input|output
                                   │   LOGGING AUTH   │
                                   └──────────────────┘
 
-logs:CreateLogDelivery
+PACTION logs:CreateLogDelivery
  |GetLogDelivery
  |UpdateLogDelivery
  |DeleteLogDelivery
@@ -2192,8 +2227,12 @@ logs:CreateLogDelivery
  |PutResourcePolicy
  |DescribeResourcePolicies
  |DescribeLogGroups               #Must be allowed on Resource '*' for MACHINE.roleArn
-logs:CreateLogStream|PutLogEvents #Must be allowed for MACHINE.roleArn
-                                  #On Resource LOG_STREAM, but which LOG_STREAM is used is not documented
+PACTION                           #Must be allowed for MACHINE.roleArn
+ logs:CreateLogStream|PutLogEvents#On Resource LOG_STREAM, but which LOG_STREAM is used is not documented
+
+PACTION kms:GenerateDataKey       #If ENCRYPT.kmsKeyId, must be allowed on Resource
+PACTION kms:Decrypt*              #If ENCRYPT.kmsKeyId, must be allowed on Resource '*'
+                                  #for Principal.Service 'delivery.logs.amazonaws.com'
 
                                   ┌─────────────────┐
                                   │   LOGGING IAC   │
