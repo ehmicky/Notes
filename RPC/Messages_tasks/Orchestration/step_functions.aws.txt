@@ -121,8 +121,9 @@ AWSStepFunctionsReadOnlyAccess    #Allows all read-only 'states:*' PACTIONs
 
 MACHINE                           #Creation is idempotent (if same REQ)
                                   #Update must specify at least either MACHINE.definition|roleArn (even if unchanged)
-                                  #Delete terminate ongoing EXECs and wait for them to fail
+                                  #Delete aborts ongoing EXECs and wait for them to fail
                                   #Delete also delete VERSIONs|ALIASs
+                                  #Max 1e4 (soft up to 2.5e4) per ACCOUNT
 MACHINE.stateMachineArn           #In output: 'MACHINE_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:stateMachine:MACHINE'
                                   #In input: 'QUALIFIED_MACHINE_ARN'
 MACHINE.name                      #'MACHINE'
@@ -200,7 +201,7 @@ DIAG_ERROR
 VERSION                           #Public immutable version of a MACHINE
                                   #Previous VERSIONs not automatically deleted
                                   #PublishStateMachineVersion() is idempotent (if same REQ)
-                                  #Delete waits for ongoing EXECs to complete (and does not terminate them)
+                                  #Delete waits for ongoing EXECs to complete (and does not abort them)
                                   #Cannot delete if there is an associated ALIAS
                                   #Max 1000 per MACHINE
 VERSION.stateMachineVersionArn    #'VERSION_ARN'. 'MACHINE_ARN:VERSION_NUM'
@@ -479,9 +480,19 @@ StopExecution()                   #Req: [ITEM_]EXEC
                                   │   EXECUTION METRICS   │
                                   └───────────────────────┘
 
+AWS/States/ExecutionTime 	        #EXEC duration
+AWS/States/ExecutionsStarted 	    #NUM of EXEC starts
+AWS/States/ExecutionsSucceeded 	  #NUM of EXEC success
+AWS/States/ExecutionsAborted 	    #NUM of EXEC aborted
+AWS/States/ExecutionsFailed 	    #NUM of EXEC failed
+AWS/States/ExecutionThrottled 	  #NUM of StateEntered events and retries that have been throttled
+                                  #This is related to StateTransition throttlin
+                                  #or more information, see Quotas related to state throttling.
+
 AWS/States/OpenExecutionCount     #NUM of ongoing EXECs
                                   #Is very approximate, e.g. if <1e4, might show 0
                                   #  - i.e. should use STAT 'Maximum'
+AWS/States/OpenExecutionLimit     #Max allowed NUM of ongoing EXECs
 
                                   ┌────────────┐
                                   │   EVENTS   │
@@ -867,6 +878,12 @@ EVENT_INFO.heartbeatInSeconds     #NUM
 SendTaskHeartbeat()               #Req: ACTIVITY_TASK
                                   #Res: empty
 
+                                  ┌─────────────────────┐
+                                  │   TIMEOUT METRICS   │
+                                  └─────────────────────┘
+
+AWS/States/ExecutionsTimedOut 	  #NUM of EXEC timed out
+
                                   ┌───────────┐
                                   │   CATCH   │
                                   └───────────┘
@@ -1000,7 +1017,7 @@ DIAG_WARNING
 ITER                              #Run of a child MACHINE, i.e. either:
                                   #  - STATE_PARALLEL branch
                                   #  - STATE_MAP ITEM
-                                  #When a MACHINE fails, child MACHINEs are terminated
+                                  #When a MACHINE fails, child MACHINEs are aborted
 
                                   ┌──────────────┐
                                   │   PARALLEL   │
@@ -1009,7 +1026,7 @@ ITER                              #Run of a child MACHINE, i.e. either:
 DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
                                   #Executes multiple child MACHINEs in parallel, with same INPUT
                                   #OUTPUT is ARR of their OUTPUTs
-                                  #If any child MACHINE throws, other childs are terminated
+                                  #If any child MACHINE throws, other childs are aborted
                                   #On error, throws ERROR_CODE 'States.BranchFailed'
 
 DSTATE_PARALLEL.Branches          #DMACHINE_ARR. Required
@@ -1073,6 +1090,7 @@ DSTATE_MAP.ItemProcessor          #DMACHINE, performed on each ITEM
 DSTATE_MAP.Items                 %
 DSTATE_MAP.ItemsPath             $#DZEXPR selecting ITEM_ARR
                                   #Def: INPUT, i.e. must be an ARR then
+                                  #Max 1e4 ITEMs
 
 DSTATE_MAP.ItemSelector           #DOEXPR, transforming each ITEM
                                   #Def: keep ITEM as is
@@ -1095,6 +1113,7 @@ DSTATE_MAP.**                     #In any DZEXPR|DOEXPR, does not use ITEM_ARR, 
                                   └─────────────┘
 
 MAP_RUN                           #STATE_MAP in a given EXEC
+                                  #Throttled at 1e3 at once
 MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:mapRun:MACHINE/STATE_MAP_LABEL:MAP_RUN_MID'
 MAP_RUN.startDate                 #DATE_NUM
 MAP_RUN.stopDate                  #DATE_NUM
@@ -1143,7 +1162,7 @@ ITEM_EXEC.itemCount               #Same as MAP_RUN.itemCounts.total
 MAP_COUNT.pending                 #NUM started but not running
 MAP_COUNT.running                 #NUM ongoing
 MAP_COUNT.succeeded               #NUM successfully completed
-MAP_COUNT.aborted                 #NUM aborted|terminated
+MAP_COUNT.aborted                 #NUM aborted
 MAP_COUNT.failed                  #NUM errored
 
 EVENT_TYPE MapIterationStarted    #On ITEM start
@@ -1197,7 +1216,7 @@ MAP_RUN|DSTATE_MAP.MaxConcurrency #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACH
                                   #Can be 1 for serial
 
 MAP_RUN|DSTATE_MAP                #When > NUM[_DZEXPR] (def: 0) ITEMs throw:
- .ToleratedFailureCount           #  - terminate every child MACHINE
+ .ToleratedFailureCount           #  - abort every child MACHINE
                                   #  - make DSTATE_MAP throw ERROR_CODE 'States.ExceedToleratedFailureThreshold'
                                   #Else, ITEMs that throw:
                                   #  - do not make parent MACHINE throw
@@ -1469,6 +1488,7 @@ PACTION states:RevealSecrets      #Must be allowed on current PRINCIPAL if TEST_
 ACTIVITY                          #Worker to process a custom TASK
                                   #E.g. long-running instance
                                   #Create is idempotent
+                                  #Max 1e4 (soft up to 1.5e4) per ACCOUNT
 ACTIVITY.activityArn              #'ACTIVITY_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:activity:ACTIVITY'
 ACTIVITY.name                     #'ACTIVITY'
                                   #Max 80 chars, [:alnum:]-_
