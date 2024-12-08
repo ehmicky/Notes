@@ -6,7 +6,6 @@
 VERSION ==>                       #2024-11-28
 
 TODO:
-  - document whole "Logging and monitoring"
   - new_services doc
      - stopped at Lambda
   - CDK:
@@ -947,7 +946,12 @@ DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def|max: 60). Same but
 DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
                                   #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
                                   #Must be < TimeoutSeconds
-                                  #Only for ACTIVITY_TASK, SERVICE_CALLBACK_TASK, SERVICE_SYNC_TASK
+                                  #Only for:
+                                  #  - ACTIVITY_TASK
+                                  #  - SERVICE_CALLBACK_TASK
+                                  #     - starts once SERVICE_TASK_ACTION completed
+                                  #        - except for Lambda with INVOCATION_REQ.InvocationType 'Event', where it starts right away
+                                  #  - SERVICE_SYNC_TASK
 
 EXEC.status                       #Can be 'TIMED_OUT'
 
@@ -1529,11 +1533,24 @@ DIAG_ERROR INVALID_RESOURCE       #DSTATE_TASK.Resource must be valid
                                   │   TASK LAMBDA   │
                                   └─────────────────┘
 
-DSTATE_TASK.Resource              #'FUNC_ARN'. LAMBDA_TASK
+DSTATE_TASK.Resource              #'FUNC_VERSION_ARN[.SERVICE_TASK_PATTERN]'. LAMBDA_TASK
                                   #Calls Lambda Invoke()
-INPUT.FunctionName                #INVOCATION_REQ.FunctionArn
-INPUT.Payload                     #INVOCATION_REQ.Payload
-OUTPUT.Payload                    #INVOCATION_RES.ResponseBody
+                                  #Cannot use INVOCATION_RES.LogResult, InvokeWithResponseStream()
+                                  #Can use SERVICE_TASK_PATTERN waitForTaskToken
+INPUT.FunctionName                #'FUNC_ARN' of INVOCATION_REQ.FunctionArn
+INPUT.Qualifier                   #'QUALIFIER' of INVOCATION_REQ.FunctionArn
+INPUT.InvocationType              #INVOCATION_REQ.InvocationType (def: 'RequestResponse')
+INPUT.Payload|ClientContext       #INVOCATION_REQ.*
+
+OUTPUT.StatusCode|Payload
+ |ExecutedVersion                 #INVOCATION_RES.*
+OUTPUT
+ .SdkResponseMetadata.RequestId   #'REQ_ID'
+OUTPUT.SdkHttpMetadata.HttpHeaders#HEADERS_OBJ
+
+ERROR_OUTPUT                      #On invocation|FUNCTION error
+
+SERVICE_TASK_ACTION lambda:invoke #Same except run as a SERVICE_TASK
 
 EVENT_TYPE LambdaFunctionScheduled#Like EVENT_TYPE Task*
 EVENT_INFO.resource               #'FUNC_ARN'
@@ -1545,6 +1562,12 @@ EVENT_TYPE
  LambdaFunctionStartFailed
 EVENT_TYPE LambdaFunctionSucceeded
 EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task*
+
+                                  ┌──────────────────────┐
+                                  │   TASK LAMBDA AUTH   │
+                                  └──────────────────────┘
+
+PACTION lambda:InvokeFunction     #Must be allowed for MACHINE.roleArn
 
                                   ┌─────────────────────────┐
                                   │   TASK LAMBDA METRICS   │
@@ -1568,17 +1591,21 @@ DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
                                   │   TASK SERVICE   │
                                   └──────────────────┘
 
-DSTATE_TASK.Resource              #'arn:aws:states:[REGION???]:[ACCOUNT_ID???]:SERVICE:ACTION'. SERVICE_TASK
-                                  #'arn:aws:states::[aws-sdk???]:lambda:invoke' possible too, but not considered LAMBDA_TASK???
-                                  #Run specific AWS SERVICE ACTION
+DSTATE_TASK.Resource              #'arn:aws:states:[REGION???]:[ACCOUNT_ID|aws-sdk???]:SERVICE_TASK_ACTION[.SERVICE_TASK_PATTERN]'
+                                  #SERVICE_TASK. Run specific AWS SERVICE ACTION
                                   #Only specific ones, documented in their respective docs
-INPUT.*                           #Passed to SERVICE-specific ACTION PARAMS.*
-                                  #CamelCase'd
-OUTPUT.*                          #From SERVICE-specific ACTION RES.*
-                                  #CamelCase'd
+                                  #Available SERVICE_TASK_ACTIONs depend on SERVICE
+INPUT.*                           #SERVICE_TASK_ACTION-specific, but usually mostly correspond to an ACTION PARAMS.*
+OUTPUT.*                          #Same for ACTION RES.*
 
-SERVICE_CALLBACK_TASK             #With 'ACTION.waitForTaskToken'???
-SERVICE_SYNC_TASK                 #With 'ACTION.sync'???
+SERVICE_TASK_PATTERN              #SERVICE_CALLBACK_TASK, "callback pattern"
+ waitForTaskToken                 #Completion requires both:
+                                  #  - SERVICE_TASK_ACTION's response|failure
+                                  #  - SendTask*() calls
+                                  #I.e. meant for async tasks which last longer than SERVICE_TASK_ACTION
+CONTEXT.Task.Token                #'ACTIVITY_TASK_MID'
+
+SERVICE_TASK_PATTERN sync         #SERVICE_SYNC_TASK, "job pattern"???
 
                                   ┌──────────────────────────┐
                                   │   TASK SERVICE METRICS   │
@@ -1777,7 +1804,11 @@ MACHINE_LOGGING.destinations[0]
  .cloudWatchLogsLogGroup          #'LOG_GROUP_ARN'
  .logGroupArn                     #'LOG_GROUP' should start with '/aws/vendedlogs/states'
 
-MACHINE_LOGGING.level             #One of 'OFF' (def), 'ERROR', 'FATAL' (???) or 'ALL'
+MACHINE_LOGGING.level             #Which EVENT_TYPEs are logged among:
+                                  #  - 'OFF' (def): none
+                                  #  - 'FATAL': ExecutionAborted|Failed|TimedOut
+                                  #  - 'ERROR': *Aborted|Failed|TimedOut, FailStateEntered
+                                  #  - 'ALL': all
 
 MACHINE_LOGGING
  .includeExecutionData            #Like EVENTS_REQ.includeExecutionData
