@@ -42,6 +42,7 @@ TODO:
            - Redriving map runs
         - Processing input and output:
            - Map state input and output fields in Step Functions
+        - Service quotas
   - https://aws.amazon.com/step-functions/faqs
   - add summary
   - change description in new_services
@@ -64,13 +65,32 @@ PAGINATION ==>                    #Uses REQ.maxResults (def 100, max 1000) + REQ
 
 EVENTUAL CONSISTENCY ==>          #Create|update|delete take up to a few minutes
 
+THROTTLING ==>                    #Per ACCOUNT + REGION
+                                  #All soft. Many are REGION-specific
+                                  #Following means RATE_LIMIT (burst BURST_LIMIT) (see token bucket algorithm doc)
+                                  # 1/s (burst 0): TestState()
+                                  # 1/s (burst 100):
+                                  #   - Create*|Publish*|Update*|Delete*()
+                                  #   - ValidateStateMachineDefinition()
+                                  #   - ListStateMachineVersions|Aliases(), ListMapRuns(), ListTagsForResource()
+                                  # 1/s (burst 200): Describe*(), [Un]tagResource()
+                                  # 5/s (burst 100): ListStateMachines()
+                                  # 5/s (burst 200): ListExecutions()
+                                  # 10/s (burst 100): ListActivities()
+                                  # 15/s (burst 300): DescribeExecution()
+                                  # 20/s (burst 200): DescribeStateMachine()
+                                  # 20/s (burst 400): GetExecutionHistory()
+                                  # 200/s (burst 1000): StopExecution()
+                                  # 300/s (burst 1300): RedriveExecution()
+                                  # 500/s (burst 3000): GetActivityTask(), SendTask*()
+                                  # 1300/s (burst 300): StartExecution()
+                                  # None: StartSyncExecution()
+
                                   ┌─────────────┐
                                   │   PRICING   │
                                   └─────────────┘
 
-PRICING ==>                       #Not Express: 1$ per 4e4 STATE execution
-                                  #  - each RETRY counts as 1 STATE execution
-                                  #  - each ITER has its own count of STATE executions
+PRICING ==>                       #Not Express: 1$ per 4e4 STATE_EXECs
                                   #  - free: 4e3
                                   #Express:
                                   #  - 1$ per 1e6 EXECs
@@ -203,7 +223,7 @@ VERSION                           #Public immutable version of a MACHINE
                                   #PublishStateMachineVersion() is idempotent (if same REQ)
                                   #Delete waits for ongoing EXECs to complete (and does not abort them)
                                   #Cannot delete if there is an associated ALIAS
-                                  #Max 1000 per MACHINE
+                                  #Max 1e3 (soft) per MACHINE
 VERSION.stateMachineVersionArn    #'VERSION_ARN'. 'MACHINE_ARN:VERSION_NUM'
 VERSION_NUM                       #Automatically incremented by PublishStateMachineVersion(), starting at 1
                                   #Similar to a git commit `hash`
@@ -258,7 +278,7 @@ ALIAS                             #'ALIAS' pointing to a VERSION
                                   #Can change its target, similar to a git tag
                                   #Create|update is idempotent (if same REQ)
                                   #Delete does not delete any associated VERSION
-                                  #Max 100 per MACHINE
+                                  #Max 100 (soft) per MACHINE
 ALIAS.stateMachineAliasArn        #'ALIAS_ARN'. 'MACHINE_ARN:ALIAS'
 ALIAS.name                        #'ALIAS'
                                   #Should avoid being a 'NUM', to prevent confusion with 'VERSION_NUM'
@@ -321,7 +341,8 @@ DMAP_CONF.ExecutionType           #Same but for child MACHINE
 
 EXCLUSIVE FEATURES ==>            #StartSyncExecution()
                                   #EXEC_BILLING
-                                  #No max EXECs at once
+                                  #No max EXECs nor STATE_EXECs at once
+                                  #Less throttling on StartExecution(): 6000 (burst 6000)
 
 MISSING FEATURES ==>              #DescribeStateMachineForExecution()
                                   #ListExecutions()
@@ -333,8 +354,10 @@ MISSING FEATURES ==>              #DescribeStateMachineForExecution()
                                   #  - but can re-run failed ITERs by passing STATE_MAP_ARN to StartExecution()
                                   #     - however, already successful STATEs in a failed ITER are re-run
                                   #  - no ITEM_EXEC.redriveDate
+                                  #ACTIVITY_TASK
 
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
+                                  #Def|max DMACHINE.TimeoutSeconds: 5m
 
 EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXEC:EXPRESS_MID'
 ITEM_EXEC_ARN                     #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXEC:EXPRESS_MID'
@@ -415,7 +438,7 @@ statelint PATH ...                #Validate DEFINITION files
 
 EXEC                              #Execution of a MACHINE
                                   #Create is idempotent (if same REQ and another is ongoing)
-                                  #Max 1e6 EXECs (soft) at once per ACCOUNT|REGION
+                                  #EXECs at once: max 1e6 (soft) per ACCOUNT + REGION
                                   #  - else throw ERROR_CODE 'States.ExecutionLimitExceeded'
 EXEC.executionArn                 #'EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE:EXEC'
 EXEC.name                         #'EXEC' (def: random UUID)
@@ -485,9 +508,6 @@ AWS/States/ExecutionsStarted 	    #NUM of EXEC starts
 AWS/States/ExecutionsSucceeded 	  #NUM of EXEC success
 AWS/States/ExecutionsAborted 	    #NUM of EXEC aborted
 AWS/States/ExecutionsFailed 	    #NUM of EXEC failed
-AWS/States/ExecutionThrottled 	  #NUM of StateEntered events and retries that have been throttled
-                                  #This is related to StateTransition throttlin
-                                  #or more information, see Quotas related to state throttling.
 
 AWS/States/OpenExecutionCount     #NUM of ongoing EXECs
                                   #Is very approximate, e.g. if <1e4, might show 0
@@ -502,6 +522,7 @@ EVENTS_REQ.executionArn           #'[ITEM_]EXEC_ARN'
 
 EVENT                             #Part of an EXEC, mostly lifecycle of STATEs
                                   #Max 2.5e4 EVENTs per [ITEM_]EXEC
+                                  #Only for last 90 days
 EVENT.id                          #EVENT_MID. Serial NUM
                                   #Initial implied EVENT_MID is 0
 EVENT.previousEventId             #EVENT_MID, if any
@@ -730,6 +751,17 @@ EVENT_TYPE STATE_TYPEStateExited  #On STATE success
 EVENT_INFO.name                   #'STATE' name
                                   #With EVENT_TYPEs STATE_TYPEStateEntered|Exited
 
+STATE_EXEC                        #Starting executing a STATE
+                                  #Each RETRY counts as 1 STATE_EXEC
+                                  #Each ITER has its own count of STATE_EXECs
+                                  #Max 5e3/s RATE_LIMIT, 5e3 BURST_LIMIT (REGION-specific, soft) (see token bucket algorithm doc) per ACCOUNT + REGION
+
+                                  ┌──────────────────┐
+                                  │   FLOW METRICS   │
+                                  └──────────────────┘
+
+AWS/States/ExecutionThrottled 	  #NUM of throttled STATE_EXECs
+
                                   ┌───────────────┐
                                   │   FLOW LINT   │
                                   └───────────────┘
@@ -846,11 +878,11 @@ DSTATE.Cause                      #'MESSAGE'[_DZEXPR] (def: none). ERROR_OUTPUT.
                                   │   TIMEOUT   │
                                   └─────────────┘
 
-DMACHINE.TimeoutSeconds           #NUM (def: none). Timeout for an EXEC
+DMACHINE.TimeoutSeconds           #NUM (def|max: 1y). Timeout for an EXEC
                                   #After NUMs, throw ERROR_CODE 'States.Timeout'
                                   #With TEST_IN: always 5m
                                   #Only for top-level MACHINE
-DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 60). Same but on STATE_TASK
+DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def|max: 60). Same but on STATE_TASK
 
 DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
                                   #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
@@ -1448,6 +1480,7 @@ SERVICE_SYNC_TASK                 #With 'ACTION.sync'???
 
 DSTATE_TASK.Resource              #'arn:aws:states:::http:invoke'. HTTP_TASK
                                   #Call an HTTP request
+                                  #Throttles 300/s RATE_LIMIT, 300 BURST_LIMIT (soft) (see token bucket algorithm doc) per ACCOUNT + REGION
 
 INPUT.ApiEndpoint                 #'URL'
 INPUT.Method                      #'HTTP_METHOD'
@@ -1525,6 +1558,7 @@ ACTIVITY_TASK_GET                 #Get an ACTIVITY_TASK
                                   #Until created, long polls for it
                                   #On success|failure, must call SendTaskSuccess|Failure()
                                   #Not logged by CloudTrail
+                                  #Max 1e3 at once
 ACTIVITY_TASK_GET.activityArn     #'ACTIVITY_ARN'
 ACTIVITY_TASK_GET.workerName      #'ACTIVITY_WORKER'. Only used for logging purpose, with EVENT_INFO.workerName
 
