@@ -6,9 +6,6 @@
 VERSION ==>                       #2024-11-28
 
 TODO:
-  - https://states-language.net/spec.html#appendix-b
-  - JSONata
-     - including all references in https://states-language.net/spec.html
   - https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html
   - part in https://docs.aws.amazon.com/step-functions/latest/dg/input-output-resultwriter.html:
      - from "If you export the child workflow execution results,"
@@ -42,6 +39,7 @@ TODO:
      - https://docs.aws.amazon.com/infrastructure-composer/latest/dg/using-composer-services-sf.html
      - https://docs.aws.amazon.com/infrastructure-composer/latest/dg/using-composer-external-files-new.html
      - connection from API Gateway API to Step Functions STATE_MACHINE
+  - JSONata
   - https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html
      - already done:
         - Processing input and output:
@@ -57,6 +55,8 @@ TODO:
 PAGINATION ==>                    #Uses REQ.maxResults (def 100, max 1000) + REQ|RES.nextToken
                                   #ValidateStateMachineDefinition(): REQ.maxResults (def|max 100), no REQ|RES.nextToken, RES.truncated BOOL
                                   #No pagination: ListTagsForResource()
+
+PRICING ==>                       #ENCRYPT: no KMS charge if type 'AWS_OWNED_KEY'
 
                                   ┌─────────────┐
                                   │   MACHINE   │
@@ -93,6 +93,7 @@ DeleteStateMachine()              #Req: MACHINE
                                   #  - only stateMachineArn
                                   #Res: empty
 
+MACHINE                           #Creation is idempotent (if exactly same)
 MACHINE.stateMachineArn           #'MACHINE_ARN'
 MACHINE.name                      #'MACHINE'
 MACHINE.creationDate              #DATE_NUM
@@ -103,9 +104,16 @@ MACHINE.type                      #STR
 
 MACHINE.label                     #STR
 
+                                  ┌──────────────────┐
+                                  │   MACHINE AUTH   │
+                                  └──────────────────┘
+
 MACHINE.roleArn                   #'ROLE_ARN'
 
-MACHINE.variableReferences.MVAR   #STR_ARR
+EVENT_INFO.roleArn                #STR
+                                  #With EVENT_TYPE ExecutionStarted
+
+TEST_IN.roleArn                   #STR
 
                                   ┌─────────────┐
                                   │   VERSION   │
@@ -134,7 +142,7 @@ NEW_VERSION.versionDescription    #STR
 VERSION.creationDate              #DATE_NUM
 VERSION.updateDate                #DATE_NUM
 
-NEW_VERSION.publish               #BOOL
+NEW_VERSION.publish               #BOOL (def: false). Create a new VERSION, incrementing it (starting at 1)
 
 VERSION.revisionId                #STR
 
@@ -176,8 +184,17 @@ ALIAS_ROUTING.weight              #NUM
                                   │   DEFINITION   │
                                   └────────────────┘
 
-MACHINE.definition                #STR
-MACHINE_GET.includedData          #STR
+MACHINE.definition                #'DMACHINE_JSON'
+                                  #Max 1MB
+
+TEST_IN.definition                #STR
+
+D*                                #Fields in 'DMACHINE_JSON'
+DMACHINE.Version                  #Always '1.0' (def)
+                                  #Only for top-level MACHINE
+
+DMACHINE|DSTATE.Comment           #STR. Description
+                                  #Only for top-level MACHINE
 
                                   ┌────────────────┐
                                   │   VALIDATION   │
@@ -190,7 +207,7 @@ ValidateStateMachineDefinition()  #Req:
 
 VALIDATE_RES.result               #'OK' or 'FAIL'
 VALIDATE_RES.diagnostics          #DIAGNOSTIC_ARR
-DIAGNOSTIC.code                   #'ERROR_CODE'
+DIAGNOSTIC.code                   #'CODE'
 DIAGNOSTIC.message                #'MESSAGE'
 DIAGNOSTIC.severity               #'ERROR' (def) or 'WARNING'
 DIAGNOSTIC.location               #STR
@@ -235,26 +252,8 @@ EXEC.stateMachineVersionArn       #'VERSION_ARN'
 EXEC.stateMachineAliasArn         #'ALIAS_ARN'
 
 EXEC.status                       #STR
-EXEC.cause                        #STR
-EXEC.error                        #STR
-
-EXEC.input                        #STR
-EXEC.inputDetails.included        #BOOL
-EXEC.output                       #STR
-EXEC.outputDetails.included       #BOOL
-
-EXEC.traceHeader                  #STR
-
-EXEC.billingDetails               #EXEC_BILLING
-EXEC_BILLING
- .billedDurationInMilliseconds    #NUM
-EXEC_BILLING.billedMemoryUsedInMB #NUM
-
-EXEC_GET.includedData             #STR
 
 AVAILABLE EVENT_TYPES ==>         #ExecutionStarted ExecutionSucceeded ExecutionAborted ExecutionTimedOut ExecutionFailed
-EVENT_INFO.roleArn                #STR
-                                  #With EVENT_TYPE ExecutionStarted
 EVENT_INFO.stateMachineAliasArn   #STR
                                   #With EVENT_TYPE ExecutionStarted
 EVENT_INFO.stateMachineVersionArn #STR
@@ -293,12 +292,14 @@ GetExecutionHistory()             #Req: EVENTS_REQ
                                   #Res: events EVENT_ARR
 
 EVENTS_REQ.executionArn           #'EXEC_ARN'
-EVENTS_REQ.includeExecutionData   #BOOL
-EVENTS_REQ.reverseOrder           #BOOL
 
 EVENT.id                          #EVENT_MID. Serial NUM, 1-indexed
 EVENT.previousEventId             #EVENT_MID, if any
+
 EVENT.timestamp                   #DATE_NUM
+EVENTS_REQ.reverseOrder           #BOOL
+
+EVENTS_REQ.includeExecutionData   #BOOL
 
 EVENT.type                        #'EVENT_TYPE' (PascalCase)
                                   #Available ones documented in this doc
@@ -306,6 +307,55 @@ EVENT.EVENT_TYPEEventDetails      #EVENT_TYPE-specific EVENT_INFO
                                   #EVENT_TYPE is camelCase
                                   #EVENT_TYPE *StateEntered|StateExited -> stateEntered|stateExited
                                   #undefined some EVENT_TYPEs
+
+                                  ┌───────────┐
+                                  │   DEBUG   │
+                                  └───────────┘
+
+TestState()                       #Req: TEST_IN
+                                  #Res: TEST_OUT
+
+TEST_OUT.status                   #STR
+
+TEST_IN.inspectionLevel           #STR
+TEST_OUT.inspectionData           #TEST_DATA
+
+TEST_IN.revealSecrets             #BOOL
+
+                                  ┌───────────┐
+                                  │   INPUT   │
+                                  └───────────┘
+
+INPUT                             #VAL (def: {}) passed to each STATE
+                                  #INPUT to first STATE is set by caller, for a given EXEC
+                                  #INPUT to other STATEs is previous STATE's OUTPUT
+                                  #JSON types only
+                                  #Max 256KB (else throw ERROR_CODE 'States.DataLimitExceeded')
+
+TRANSFORM INPUT ==>               #By default, INPUT is kept as is
+
+DSTATE.Arguments                 %#DOEXPR (def: keep as is). Transforms INPUT
+                                 %#Only with STATE_TASK|MAP|PARALLEL
+$states.input                    %#INPUT
+
+DSTATE.InputPath                 $#DSEXPR. Transforms INPUT
+                                 $#null is same as empty OBJ
+                                 $#Not with STATE_FAIL
+DSTATE.Parameters                $#DOEXPR. Transforms INPUT
+                                 $#Done after InputPath
+                                 $#Throws ERROR_CODE 'States.ParameterPathFailure' if some DSEXPR does not match
+                                 $#Only with STATE_TASK|MAP|PARALLEL|PASS
+
+EXEC.input                        #STR
+EXEC.inputDetails.included        #BOOL
+
+TEST_IN.input                     #STR
+TEST_DATA.input                   #STR
+TEST_DATA.afterArguments          #STR
+TEST_DATA.afterInputPath          #STR
+TEST_DATA.afterParameters         #STR
+
+TASK.input                        #STR
 
 EVENT_INFO.input                  #'JSON'
                                   #Max 260KB
@@ -316,6 +366,47 @@ EVENT_INFO.input                  #'JSON'
                                   #  - LambdaFunctionScheduled
 EVENT_INFO.inputDetails.truncated #BOOL
                                   #With same EVENT_TYPEs as EVENT_INFO.input
+
+                                  ┌────────────┐
+                                  │   OUTPUT   │
+                                  └────────────┘
+
+OUTPUT                            #VAL (def: INPUT) returned by each STATE
+                                  #OUTPUT from final STATE is EXEC's output
+                                  #JSON types only
+                                  #Max 256KB (else throw ERROR_CODE 'States.DataLimitExceeded')
+
+TRANSFORM OUTPUT ==>              #By default, OUTPUT is kept as is
+
+DSTATE.Output                    %#DOEXPR (def: keep as is). Transforms OUTPUT
+                                 %#Not with STATE_FAIL
+$states.result                   %#OUTPUT
+                                 %#Only in DSTATE.Output|Assign
+                                 %#Only with STATE_TASK|MAP|PARALLEL
+
+DSTATE.ResultSelector            $#DOEXPR. Transforms OUTPUT
+                                 $#Only with STATE_TASK|MAP|PARALLEL
+DSTATE.ResultPath                $#DZEXPR. Sets OUTPUT as {...INPUT, DZEXPR: OUTPUT}
+                                 $#If INPUT.DZEXPR already exists, overrides it
+                                 $#null sets OUTPUT as {...INPUT}
+                                 $#Cannot use CONTEXT nor $DVAR
+                                 $#Done after ResultSelector
+                                 $#Throws ERROR_CODE 'States.ResultPathMatchFailure' if some DSEXPR does not match
+                                 $#Only with STATE_TASK|MAP|PARALLEL|PASS
+DSTATE.OutputPath                $#DSEXPR. Transforms OUTPUT
+                                 $#null is same as empty OBJ
+                                 $#Done after ResultPath
+                                 $#Not with STATE_FAIL
+
+EXEC.output                       #STR
+EXEC.outputDetails.included       #BOOL
+
+TEST_OUT.output                   #STR
+TEST_DATA.afterResultPath         #STR
+TEST_DATA.afterResultSelector     #STR
+TEST_DATA.result                  #STR
+
+TASK.output                       #STR
 
 EVENT_INFO.output                 #'JSON'
                                   #Max 260KB
@@ -328,11 +419,166 @@ EVENT_INFO.output                 #'JSON'
 EVENT_INFO.outputDetails.truncated#BOOL
                                   #With same EVENT_TYPEs as EVENT_INFO.output
 
+                                  ┌─────────────┐
+                                  │   CONTEXT   │
+                                  └─────────────┘
+
+CONTEXT                           #'OBJ_JSON' passed to each STATE
+                                  #Set by caller, for a given EXEC
+
+$states.context                  %#CONTEXT
+$$...                            $#Like $... but root value is CONTEXT instead
+
+                                  ┌───────────────┐
+                                  │   VARIABLES   │
+                                  └───────────────┘
+
+DSTATE.Assign.DVAR                #VAL. "State machine variable"
+                                  #Sets $DVAR in any later STATE (not current STATE)
+                                  #Can only reference $DVAR inside JSONPath|JSONata
+                                 %#$DVAR cannot be set inside a query
+                                 %#Other variables assigned inside a query ($VAR := VAL) can only be used inside that query
+                                  #Child MACHINEs:
+                                  #  - have their own DVAR scope
+                                  #  - can use upper scope's DVARs, but not set them
+                                  #  - cannot use lower|sibling scopes' DVARs
+                                  #DVAR:
+                                  #  - max 80 chars
+                                  #  - ID_Continue: letters-like, numbers-like, _, diacretics, U+200C U+200D (zero-width space)
+                                  #  - first char: ID_Start: letters-like
+                                  #Not with STATE_SUCCEED|FAIL
+
+MACHINE.variableReferences.MVAR   #STR_ARR
+
+TEST_IN.variables                 #STR
+TEST_DATA.variables               #STR
+
 EVENT_INFO.assignedVariables.STR  #STR
                                   #With EVENT_TYPE *StateExited
 EVENT_INFO
  .assignedVariablesDetails        #BOOL
  .truncated                       #With EVENT_TYPE *StateExited
+
+                                  ┌───────────┐
+                                  │   STATE   │
+                                  └───────────┘
+
+DMACHINE.States.STATE             #DSTATE. Like `case` in a `switch` statement
+                                  #'STATE' name max 80 chars
+
+DSTATE.Type                       #'STATE_TYPE'
+DSTATE_*.*                        #STATE_TYPE-specific, e.g. DSTATE_CHOICE.Default
+
+                                  ┌──────────┐
+                                  │   FLOW   │
+                                  └──────────┘
+
+DMACHINE.StartAt                  #'STATE'. First STATE
+
+DSTATE.Next                       #'STATE'. Next STATE
+                                  #Cannot target a 'STATE' in parent|child MACHINEs
+                                  #Together with DCHOICE.Next, called "transition"
+
+DSTATE.End                        #BOOL (def: false). End MACHINE successfully
+                                  #Continue parent MACHINEs
+                                  #Not with STATE_CHOICE|SUCCEED|FAIL
+                                  #Together with STATE_SUCCEED|FAIL, called "terminal state" (of a MACHINE)
+
+DSTATE.Type                       #'Succeed'. STATE is STATE_SUCCEED
+                                  #End MACHINE successfully
+                                  #Continue parent MACHINEs
+
+TEST_OUT.nextState                #STR
+
+AVAILABLE EVENT_TYPES ==>         #SucceedStateEntered SucceedStateExited
+
+                                  ┌────────────┐
+                                  │   CHOICE   │
+                                  └────────────┘
+
+DSTATE.Type                       #'Choice'. STATE is STATE_CHOICE
+                                  #Like a `switch` statement
+
+DSTATE_CHOICE.Default             #'STATE'
+                                  #Def: throw ERROR_CODE 'States.NoChoiceMatched'
+
+DSTATE_CHOICE.Choices             #DCHOICE_ARR
+                                  #Cannot be empty
+DCHOICE.Next                      #Like DSTATE.Next. Required
+
+DCHOICE.Assign                    #Like DSTATE_CHOICE.Assign
+                                  #DSTATE_CHOICE.Assign is not used if any DCHOICE matches (even if it has no DCHOICE.Assign)
+
+AVAILABLE EVENT_TYPES ==>         #ChoiceStateEntered ChoiceStateExited
+
+                                  ┌───────────────┐
+                                  │   CONDITION   │
+                                  └───────────────┘
+
+DCHOICE.Condition                %#BOOL_DOEXPR. Required
+DCHOICE.Output                   %#OUTPUT_DOEXPR (def: keep as is). Transforms OUTPUT
+
+DCHOICE.*                        $#DCOND, i.e. condition deciding whether to pick DCHOICE
+DCHOICE.Variable                 $#DSEXPR. VAL to compare
+
+DCOND.Not                        $#DCOND2
+DCOND.And|Or                     $#DCOND_ARR
+                                 $#Cannot be empty
+
+DCOND.IsPresent                  $#BOOL. VAL !== undefined
+DCOND.IsNull                     $#BOOL. VAL === null
+
+DCOND.IsBoolean                  $#BOOL. VAL is a BOOL
+DCOND.BooleanEquals              $#BOOL[_DZEXPR]. VAL === BOOL
+
+DCOND.IsNumeric                  $#BOOL. VAL is a NUM
+DCOND.NumericEquals              $#NUM[_DZEXPR]. VAL === NUM
+DCOND
+.NumericLess|GreaterThan[Equals] $#NUM[_DZEXPR]. VAL < <= > >= NUM
+
+DCOND.IsString                   $#BOOL. VAL is a STR
+DCOND.StringEquals               $#STR[_DZEXPR]. VAL === STR
+DCOND.StringMatches              $#'GLOB'. VAL matches GLOB
+                                 $#GLOB can only use *
+                                 $#Must \-escape * \
+DCOND
+ .StringLess|GreaterThan[Equals] $#STR[_DZEXPR]. VAL < <= > >= STR
+
+DCOND.IsTimestamp                $#BOOL. VAL is a DATE
+DCOND.TimestampEquals            $#'DATE'[_DZEXPR]. VAL === DATE
+DCOND.TimestampLess
+ |GreaterThan[Equals]            $#'DATE'[_DZEXPR]. VAL < <= > >= DATE
+
+                                  ┌───────────┐
+                                  │   ERROR   │
+                                  └───────────┘
+
+ERROR                             #STATEs can throw ERRORs
+                                  #In addition to ERRORs documented in this doc, any STATE might fail due to network ERRORs
+                                  #ERRORs are propagated to parent STATE|MACHINEs
+                                  #When ERROR reaches top-level MACHINE, ends it with failure, using ERROR as OUTPUT
+
+ERROR_OUTPUT                      #On error, used as OUTPUT
+ERROR_OUTPUT.Error                #'ERROR_CODE'
+                                  #'States.*' reserved, i.e. should not use inside STATE_TASK
+ERROR_OUTPUT.Cause                #'MESSAGE'
+
+DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
+                                  #End MACHINE with failure, including parent ones
+                                  #OUTPUT is ERROR_OUTPUT
+DSTATE.Error                      #'ERROR_CODE'[_DZEXPR] (def: ???). ERROR_OUTPUT.Error
+DSTATE.Cause                      #'MESSAGE'[_DZEXPR] (def: none). ERROR_OUTPUT.Cause
+
+AVAILABLE EVENT_TYPES ==>         #FailStateEntered
+
+EXEC.error                        #STR
+EXEC.cause                        #STR
+
+TEST_OUT.error                    #STR
+TEST_OUT.cause                    #STR
+
+TASK.error                        #STR
+TASK.cause                        #STR
 
 EVENT_INFO.error                  #STR
                                   #With EVENT_TYPEs:
@@ -342,11 +588,371 @@ EVENT_INFO.error                  #STR
 EVENT_INFO.cause                  #STR
                                   #With same EVENT_TYPEs as EVENT_INFO.error
 
+                                  ┌───────────┐
+                                  │   CATCH   │
+                                  └───────────┘
+
+DSTATE.Catch                      #DCATCH_ARR. On error, execute some logic
+                                  #Only with STATE_TASK|MAP|PARALLEL
+DCATCH.Next                       #Like DSTATE.Next. Required
+
+DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
+'States.ALL'                      #Special ERROR_CODE, matching any ERROR_CODE
+                                  #  - except 'States.DataLimitExceeded|Runtime'
+                                  #Only in DCATCH|DRETRY.ErrorEquals
+                                  #Must be in last DCATCH|DRETRY of its ARR
+
+DCATCH's INPUT ==>                #In first matching DCATCH: STATE's INPUT
+                                  #In next ones: previous matching DCATCH's ERROR_OUTPUT
+
+DCATCH.Output                    %#ERROR_OUTPUT_DOEXPR (def: keep as is). Transforms ERROR_OUTPUT
+$states.errorOutput              %#ERROR_OUTPUT
+                                 %#Only in DCATCH.Output|Assign
+                                 %#Only with STATE_TASK|MAP|PARALLEL
+DCATCH.ResultPath                $#Like DSTATE.ResultPath, but on ERROR_OUTPUT
+
+DCATCH.Assign                     #Like DSTATE.Assign
+
+                                  ┌───────────┐
+                                  │   RETRY   │
+                                  └───────────┘
+
+DSTATE.Retry                      #DRETRY_ARR. Retry STATE if throws
+                                  #If a retry succeeds:
+                                  #  - STATE does not throw anymore
+                                  #  - CATCHs not run
+                                  #Def: no retry
+                                  #Only with STATE_TASK|MAP|PARALLEL
+
+DRETRY.ErrorEquals                #Same as DCATCH.ErrorEquals
+
+DRETRY.MaxAttempts                #NUM (def: 3). Max NUM of retries
+                                  #Can be 0 to not retry
+DRETRY.IntervalSeconds            #NUM (in secs, def: 1). Initial delay
+DRETRY.BackoffRate                #NUM (def: 2). Multiplies delay after each retry
+DRETRY.JitterStrategy             #'NONE' (def) or 'FULL'. Applies random jitter to delay, which helps spread the load
+DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
+                                  #If reached, continues to retry, but with this delay
+
+                                  ┌─────────────┐
+                                  │   TIMEOUT   │
+                                  └─────────────┘
+
+DMACHINE.TimeoutSeconds           #NUM (def: none). After NUMs, throw ERROR_CODE 'States.Timeout'
+                                  #Only for top-level MACHINE
+DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 60). Same but on STATE_TASK
+
+DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
+                                  #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
+                                  #Must be < TimeoutSeconds
+
 EVENT_INFO.timeoutInSeconds       #NUM
                                   #With EVENT_TYPEs *Scheduled
 
 EVENT_INFO.heartbeatInSeconds     #NUM
                                   #With EVENT_TYPEs ActivityScheduled and TaskScheduled
+
+                                  ┌──────────┐
+                                  │   PASS   │
+                                  └──────────┘
+
+DSTATE.Type                       #'Pass'. STATE is STATE_PASS
+                                  #Noop. Potential goals: set OUTPUT, set DVARs, apply parent STATE_MAP
+
+DSTATE_PASS.Output               %#OUTPUT_DOEXPR (def: INPUT). Transforms OUTPUT, like other STATEs
+DSTATE_PASS.Result               $#OUTPUT (def: INPUT). Sets OUTPUT
+                                 $#Cannot use DSEXPR|DFUNCs
+
+AVAILABLE EVENT_TYPES ==>         #PassStateEntered PassStateExited
+
+                                  ┌──────────────┐
+                                  │   PARALLEL   │
+                                  └──────────────┘
+
+DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
+                                  #Executes multiple child MACHINEs in parallel, with same INPUT
+                                  #OUTPUT is ARR of their OUTPUTs
+                                  #If any child MACHINE throws, other childs are terminated
+                                  #On error, throws ERROR_CODE 'States.BranchFailed'
+
+DSTATE_PARALLEL.Branches          #DMACHINE_ARR
+
+AVAILABLE EVENT_TYPES ==>         #ParallelStateEntered ParallelStateExited ParallelStateStarted ParallelStateSucceeded
+                                  #ParallelStateAborted ParallelStateFailed
+
+                                  ┌──────────────┐
+                                  │   MAP MAIN   │
+                                  └──────────────┘
+
+DSTATE.Type                       #'Map'. STATE is STATE_MAP
+                                  #Executes one child MACHINEs per ITEM_ARR, in parallel
+                                  #OUTPUT is ARR of their OUTPUTs
+                                  #Order is:
+                                 %#  - Arguments -> ItemReader -> Items -> ItemSelector -> ItemBatcher
+                                 $#  - InputPath -> ItemReader -> ItemsPath -> ItemSelector -> ItemBatcher
+
+DSTATE_MAP.ItemProcessor          #DMACHINE, performed on each ITEM
+
+DSTATE_MAP.Items                 %
+DSTATE_MAP.ItemsPath             $#DZEXPR selecting ITEM_ARR
+                                  #Def: INPUT, i.e. must be an ARR then
+
+DSTATE_MAP.ItemSelector           #DOEXPR, transforming each ITEM
+                                  #Def: keep ITEM as is
+CONTEXT.Map.Item.Index            #NUM (0-based)
+                                  #Only in DSTATE_MAP.ItemSelector
+CONTEXT.Map.Item.Value            #VAL. ITEM's value
+                                  #Uses both:
+                                 %#  - DSTATE_MAP.Arguments|Items
+                                 $#  - DSTATE_MAP.InputPath|ItemsPath
+                                  #Only in DSTATE_MAP.ItemSelector
+
+DSTATE_MAP.**                     #In any DZEXPR|DOEXPR, does not use ITEM_ARR, ITEM nor DSTATE_MAP.Item*:
+                                 %#  - $states.input is INPUT
+                                 %#     - i.e. uses only DSTATE_MAP.Arguments's result
+                                 $#  - $ is INPUT
+                                 $#     - i.e. uses only DSTATE_MAP.InputPath's result
+
+AVAILABLE EVENT_TYPES ==>         #MapStateEntered MapStateExited MapStateStarted MapStateSucceeded MapStateAborted MapStateFailed
+EVENT_INFO.length                 #NUM
+                                  #With EVENT_TYPE MapStateStarted
+
+                                  ┌────────────────┐
+                                  │   MAP CONFIG   │
+                                  └────────────────┘
+
+MAP_RUN.maxConcurrency            #NUM
+MAP_RUN.toleratedFailureCount     #NUM
+MAP_RUN.toleratedFailurePercentage#NUM
+
+DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
+                                  #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
+DMAP_CONF.Mode                    #'INLINE' or 'DISTRIBUTED'???
+DMAP_CONF.ExecutionType           #'STANDARD' (def) or 'EXPRESS'???
+                                  #Only if DMAP_CONF.Mode 'DISTRIBUTED'
+
+DSTATE_MAP.MaxConcurrency         #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
+                                  #Can be 1 for serial
+
+DSTATE_MAP.ToleratedFailureCount  #When > NUM[_DZEXPR] (def: 0) ITEMs throw:
+                                  #  - terminate every child MACHINE
+                                  #  - make DSTATE_MAP throw ERROR_CODE 'States.ExceedToleratedFailureThreshold'
+                                  #Else, ITEMs that throw:
+                                  #  - do not make parent MACHINE throw
+                                  #  - produce ERROR_OUTPUTs
+DSTATE_MAP
+ .ToleratedFailurePercentage      #Same but as NUM[_DZEXPR] 0-100 percentage (def: 0)
+
+                                  ┌───────────────┐
+                                  │   MAP BATCH   │
+                                  └───────────────┘
+
+DSTATE_MAP.ItemBatcher            #DBATCH. Pass BATCHs to each MACHINE, i.e. groups of multiple ITEMs
+                                  #INPUT becomes {Items ITEM_ARR, BatchInput VAL}
+                                  #OUTPUT is ARR of each MACHINE's OUTPUT, i.e. one output element per BATCH
+                                  #Def: no BATCHs
+
+DBATCH.MaxItemsPerBatch           #Max NUM[_DZEXPR] of ITEMs per BATCH
+DBATCH.MaxInputBytesPerBatch      #Max NUM[_DZEXPR] (in bytes, def|max 256KB) total size per BATCH
+                                  #Must be explicitly set if no MaxItemsPerBatch
+                                  #Combined with MaxItemsPerBatch (if any)
+
+DBATCH.BatchInput                 #DOEXPR (def: undefined), to set as INPUT.BatchInput
+
+                                  ┌─────────────┐
+                                  │   MAP RUN   │
+                                  └─────────────┘
+
+UpdateMapRun()                    #Req: MAP_RUN
+                                  #  - no *Date, status, executionArn, redrive*, *Counts
+                                  #Res: empty
+ListMapRuns()                     #Req: MAP_RUN
+                                  #  - only executionArn
+                                  #Res: mapRuns MAP_RUN_ARR
+                                  #  - only mapRunArn, executionArn, startDate, stopDate
+                                  #  - only one with stateMachineArn
+DescribeMapRun()                  #Req: MAP_RUN
+                                  #  - only mapRunArn
+                                  #Res: MAP_RUN
+DescribeStateMachineForExecution()#Also returns mapRunArn (see above)
+
+MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'
+MAP_RUN.startDate                 #DATE_NUM
+MAP_RUN.stopDate                  #DATE_NUM
+
+MAP_RUN.status                    #STR
+
+MAP_RUN.stateMachineArn           #'MACHINE_ARN'
+MAP_RUN.executionArn              #'EXEC_ARN'
+EXEC.mapRunArn                    #'MAP_RUN_ARN'
+EXEC.itemCount                    #NUM
+
+MAP_RUN.executionCounts           #MAP_COUNT
+MAP_RUN.itemCounts                #MAP_COUNT
+MAP_COUNT.aborted                 #NUM
+MAP_COUNT.failed                  #NUM
+MAP_COUNT.failuresNotRedrivable   #NUM
+MAP_COUNT.pending                 #NUM
+MAP_COUNT.pendingRedrive          #NUM
+MAP_COUNT.resultsWritten          #NUM
+MAP_COUNT.running                 #NUM
+MAP_COUNT.succeeded               #NUM
+MAP_COUNT.timedOut                #NUM
+MAP_COUNT.total                   #NUM
+
+AVAILABLE EVENT_TYPES ==>         #MapRunStarted MapRunSucceeded MapRunAborted MapRunFailed
+EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
+                                  #With EVENT_TYPEs MapRunStarted and MapRunRedriven
+
+                                  ┌───────────────────┐
+                                  │   MAP ITERATION   │
+                                  └───────────────────┘
+
+AVAILABLE EVENT_TYPES ==>         #MapIterationStarted MapIterationSucceeded MapIterationAborted MapIterationFailed
+EVENT_INFO.index                  #NUM
+                                  #With EVENT_TYPEs MapIteration*
+EVENT_INFO.name                   #'STATE'
+                                  #Max 80 chars, [:alnum:]-_
+                                  #With EVENT_TYPEs MapIteration*, *StateEntered, *StateExited
+
+                                  ┌─────────────────┐
+                                  │   MAP S3 READ   │
+                                  └─────────────────┘
+
+DSTATE_MAP.ItemReader             #DREADER. Set INPUT using S3 OBJECTs
+                                  #On error, throws ERROR_CODE:
+                                  #  - 'States.Permissions': auth-related
+                                  #  - 'States.ItemReaderFailed': else
+
+DREADER.Resource                  #Always 'arn:aws:states:::s3:getObject'
+
+DREADER.Arguments                %
+DREADER.Parameters               $#DREADER_PARAMS, as DOEXPR
+DREADER_PARAMS.Bucket             #S3 'BUCKET'
+                                  #Must be in same ACCOUNT|REGION as MACHINE
+
+DREADER_PARAMS.Prefix             #'PREFIX'. S3 OBJECT prefix. Does ListObjectsV2()
+                                  #New INPUT is response's OBJECTS.Contents OBJECT_ARR
+                                  #Excludes proper FOLDERs, i.e. 'OBJECT' ends with delimiter (e.g. /) and has empty contents
+                                  #See also S3 JOB_LAMBDA, as an alternative
+
+DREADER_PARAMS.Key                #S3 'OBJECT'. Alternative to DREADER_PARAMS.Prefix, doing GetObject()
+                                  #New INPUT is ARR items contained in OBJECT
+DREADER.ReaderConfig              #DREADER_CONF
+                                  #Only if DEADER_PARAMS.Key used
+DREADER_CONF.MaxItems             #NUM[_DZEXPR] (def|max: 1e8). Only use first NUM items
+DREADER_CONF.InputType            #'JSON', 'CSV' or 'MANIFEST'
+
+DREADER_CONF.InputType 'JSON'     #OBJ_ARR
+                                  #Max 8MB
+                                  #Max 256KB after DSTATE_MAP.Item* applied
+
+DREADER_CONF.InputType 'CSV'      #Values are always considered STRs
+                                  #Same limits as JSON
+DREADER_CONF.CSVHeaderLocation    #Whether OBJ keys are specified:
+                                  #  - 'FIRST_ROW' (def): as first CSV row
+                                  #  - 'GIVEN': with DREADER_CONF.CSVHeaders
+                                  #OBJ keys max 10KB
+DREADER_CONF.CSVHeaders           #'KEY'_ARR
+
+DREADER_CONF.InputType 'MANIFEST' #S3 INVENTORY MANIFEST
+                                  #New INPUT is INVENTORY_LINE_ARR
+                                  #Max 10GB
+                                  #Max 256KB after DSTATE_MAP.Item* applied
+
+                                  ┌──────────────────────┐
+                                  │   MAP S3 READ AUTH   │
+                                  └──────────────────────┘
+
+PACTION s3:ListBucket             #If DREADER_PARAMS.Prefix, must be allowed:
+                                  #  - on MACHINE.roleArn
+                                  #  - Resource BUCKET
+                                  #  - COND_KEY s3:prefix 'PREFIX'
+
+PACTION s3:GetObject              #If DREADER_PARAMS.Key, must be allowed:
+                                  #  - on MACHINE.roleArn
+                                  #  - Resource:
+                                  #     - if JSON|CSV: OBJECT
+                                  #     - if MANIFEST:
+                                  #        - arn:aws:s3:::DEST_PREFIX/SOURCE_BUCKET/INVENTORY/YYYY-MM-DDTHH-MMZ/manifest.json
+                                  #        - arn:aws:s3:::DEST_PREFIX/SOURCE_BUCKET/INVENTORY/data/*
+
+                                  ┌──────────────────┐
+                                  │   MAP S3 WRITE   │
+                                  └──────────────────┘
+
+DSTATE_MAP.ResultWriter           #DWRITER. Write each OUTPUT item as a JSON S3 OBJECT, using PutObject()
+                                  #Order is:
+                                 %#  - ResultWriter -> Output
+                                 $#  - ResultWriter -> ResultSelector -> ResultPath -> OutputPath
+                                  #On error, throws ERROR_CODE:
+                                  #  - 'States.Permissions': auth-related
+                                  #  - 'States.ResultWriterFailed': else
+
+DWRITER.Resource                  #Always 'arn:aws:states:::s3:putObject'
+
+DWRITER.Arguments                %
+DWRITER.Parameters               $#DWRITER_PARAMS, as DOEXPR
+DWRITER_PARAMS.Bucket             #S3 'BUCKET'
+                                  #Must be in same ACCOUNT|REGION as MACHINE
+DREADER_PARAMS.Prefix             #'PREFIX'. S3 OBJECT prefix
+                                  #Where is it written to???
+
+DWRITER_OUTPUT                    #Each OUTPUT item
+                                  #No size limit initial total OUTPUT (can be > 256KB)
+                                  #  - as opposed to total DWRITER_OUTPUTs, which is max 256KB
+DWRITER_OUTPUT.statusCode         #STATUS_NUM
+DWRITER_OUTPUT.inputReceived      #OBJ. OUTPUT item
+
+                                  ┌───────────────────────┐
+                                  │   MAP S3 WRITE AUTH   │
+                                  └───────────────────────┘
+
+PACTION s3:PutObject|GetObject    #Must be allowed:
+ |ListMultipartUploadParts        #  - on MACHINE.roleArn
+ |AbortMultipartUpload            #  - Resource BUCKET/PREFIX/*
+
+                                  ┌──────────┐
+                                  │   WAIT   │
+                                  └──────────┘
+
+DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
+                                  #Wait for a specific duration
+
+DSTATE_WAIT.Timestamp             #'DATE'[_DZEXPR]
+DSTATE_WAIT.Seconds               #NUM[_DZEXPR]. Alternative to Timestamp
+
+AVAILABLE EVENT_TYPES ==>         #WaitStateEntered WaitStateExited WaitStateAborted
+
+                                  ┌──────────┐
+                                  │   TASK   │
+                                  └──────────┘
+
+DSTATE.Type                       #'Task'. STATE is STATE_TASK
+                                  #On error, throws ERROR_CODE:
+                                  #  - 'States.Permissions': auth-related
+                                  #  - 'States.TaskFailed': else
+
+DSTATE_TASK.Resource              #'ARN'. Available ones documented below
+
+AVAILABLE EVENT_TYPES ==>         #TaskSubmitted TaskSubmitFailed TaskScheduled TaskStarted TaskStartFailed TaskSucceeded TaskTimedOut TaskFailed
+EVENT_INFO.resource               #STR
+                                  #With EVENT_TYPEs Task* (except TaskState*)
+EVENT_INFO.resourceType           #STR
+                                  #With same EVENT_TYPEs as EVENT_INFO.resource
+EVENT_INFO.parameters             #STR
+                                  #With EVENT_TYPE TaskScheduled
+EVENT_INFO.region                 #STR
+                                  #With EVENT_TYPE TaskScheduled
+
+AVAILABLE EVENT_TYPES ==>         #TaskStateEntered TaskStateExited TaskStateAborted
+
+                                  ┌───────────────┐
+                                  │   TASK AUTH   │
+                                  └───────────────┘
+
+DSTATE_TASK.Credentials           #DCREDS, as DOEXPR
+DCREDS.RoleArn                    #'ROLE_ARN' assumed by Resource
 
 EVENT_INFO.taskCredentials.roleArn#'ROLE_ARN'
                                   #With EVENT_TYPEs LambdaFunctionScheduled and TaskScheduled
@@ -380,9 +986,11 @@ EVENT_INFO.resource               #STR
 EVENT_INFO.workerName             #STR
                                   #With EVENT_TYPE ActivityStarted
 
-                                  ┌──────────┐
-                                  │   TASK   │
-                                  └──────────┘
+                                  ┌───────────────────┐
+                                  │   ACTIVITY TASK   │
+                                  └───────────────────┘
+
+DSTATE_TASK.Resource              #'TASK_ARN'
 
 GetActivityTask()                 #Req: TASK_GET
                                   #Res: TASK
@@ -400,144 +1008,20 @@ TASK.taskToken                    #'TASK_MID'
 TASK_GET.activityArn              #
 TASK_GET.workerName               #
 
-TASK.input                        #STR
-TASK.output                       #STR
-TASK.error                        #STR
-TASK.cause                        #STR
+                                  ┌────────────┐
+                                  │   LAMBDA   │
+                                  └────────────┘
 
-AVAILABLE EVENT_TYPES ==>         #TaskSubmitted TaskSubmitFailed TaskScheduled TaskStarted TaskStartFailed TaskSucceeded TaskTimedOut TaskFailed
+DSTATE_TASK.Resource              #'FUNC_ARN': run Lambda FUNCTION, with INPUT|OUTPUT as REQ|RES
+
+AVAILABLE EVENT_TYPES ==>         #LambdaFunctionScheduled LambdaFunctionScheduleFailed LambdaFunctionStarted
+                                  #LambdaFunctionStartFailed LambdaFunctionSucceeded LambdaFunctionTimedOut LambdaFunctionFailed
 EVENT_INFO.resource               #STR
-                                  #With EVENT_TYPEs Task* (except TaskState*)
-EVENT_INFO.resourceType           #STR
-                                  #With same EVENT_TYPEs as EVENT_INFO.resource
-EVENT_INFO.parameters             #STR
-                                  #With EVENT_TYPE TaskScheduled
-EVENT_INFO.region                 #STR
-                                  #With EVENT_TYPE TaskScheduled
+                                  #With EVENT_TYPE LambdaFunctionScheduled
 
-                                  ┌────────────────┐
-                                  │   ENCRYPTION   │
-                                  └────────────────┘
-
-MACHINE|ACTIVITY
- .encryptionConfiguration         #ENCRYPT
-ENCRYPT.type                      #'AWS_OWNED_KEY' or 'CUSTOMER_MANAGED_KMS_KEY'
-ENCRYPT.kmsKeyId                  #KMS 'KEY_ID'
-ENCRYPT
- .kmsDataKeyReusePeriodSeconds    #NUM
-
-                                  ┌─────────────┐
-                                  │   LOGGING   │
-                                  └─────────────┘
-
-MACHINE
- .tracingConfiguration.enabled    #BOOL
-
-MACHINE.loggingConfiguration      #MACHINE_LOGGING
-MACHINE_LOGGING.destinations[*]
- .cloudWatchLogsLogGroup
- .logGroupArn                     #'LOG_GROUP_ARN'
-MACHINE_LOGGING.level             #STR
-MACHINE_LOGGING
- .includeExecutionData            #BOOL
-
-                                  ┌─────────────┐
-                                  │   MAP RUN   │
-                                  └─────────────┘
-
-UpdateMapRun()                    #Req: MAP_RUN
-                                  #  - no *Date, status, executionArn, redrive*, *Counts
-                                  #Res: empty
-ListMapRuns()                     #Req: MAP_RUN
-                                  #  - only executionArn
-                                  #Res: mapRuns MAP_RUN_ARR
-                                  #  - only mapRunArn, executionArn, startDate, stopDate
-                                  #  - only one with stateMachineArn
-DescribeMapRun()                  #Req: MAP_RUN
-                                  #  - only mapRunArn
-                                  #Res: MAP_RUN
-DescribeStateMachineForExecution()#Also returns mapRunArn (see above)
-
-MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'
-MAP_RUN.startDate                 #DATE_NUM
-MAP_RUN.stopDate                  #DATE_NUM
-
-MAP_RUN.status                    #STR
-
-MAP_RUN.stateMachineArn           #'MACHINE_ARN'
-MAP_RUN.executionArn              #'EXEC_ARN'
-EXEC.mapRunArn                    #'MAP_RUN_ARN'
-EXEC.itemCount                    #NUM
-
-MAP_RUN.maxConcurrency            #NUM
-MAP_RUN.toleratedFailureCount     #NUM
-MAP_RUN.toleratedFailurePercentage#NUM
-
-MAP_RUN.executionCounts           #MAP_COUNT
-MAP_RUN.itemCounts                #MAP_COUNT
-MAP_COUNT.aborted                 #NUM
-MAP_COUNT.failed                  #NUM
-MAP_COUNT.failuresNotRedrivable   #NUM
-MAP_COUNT.pending                 #NUM
-MAP_COUNT.pendingRedrive          #NUM
-MAP_COUNT.resultsWritten          #NUM
-MAP_COUNT.running                 #NUM
-MAP_COUNT.succeeded               #NUM
-MAP_COUNT.timedOut                #NUM
-MAP_COUNT.total                   #NUM
-
-AVAILABLE EVENT_TYPES ==>         #MapRunStarted MapRunSucceeded MapRunAborted MapRunFailed
-EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
-                                  #With EVENT_TYPEs MapRunStarted and MapRunRedriven
-
-                                  ┌───────────────┐
-                                  │   MAP STATE   │
-                                  └───────────────┘
-
-AVAILABLE EVENT_TYPES ==>         #MapStateEntered MapStateExited MapStateStarted MapStateSucceeded MapStateAborted MapStateFailed
-EVENT_INFO.length                 #NUM
-                                  #With EVENT_TYPE MapStateStarted
-
-                                  ┌───────────────────┐
-                                  │   MAP ITERATION   │
-                                  └───────────────────┘
-
-AVAILABLE EVENT_TYPES ==>         #MapIterationStarted MapIterationSucceeded MapIterationAborted MapIterationFailed
-EVENT_INFO.index                  #NUM
-                                  #With EVENT_TYPEs MapIteration*
-EVENT_INFO.name                   #'STATE'
-                                  #Max 80 chars, [:alnum:]-_
-                                  #With EVENT_TYPEs MapIteration*, *StateEntered, *StateExited
-
-                                  ┌───────────┐
-                                  │   STATE   │
-                                  └───────────┘
-
-TestState()                       #Req: TEST_IN
-                                  #Res: TEST_OUT
-
-TEST_IN.definition                #STR
-TEST_IN.input                     #STR
-TEST_IN.revealSecrets             #BOOL
-TEST_IN.roleArn                   #STR
-TEST_IN.variables                 #STR
-
-TEST_OUT.error                    #STR
-TEST_OUT.cause                    #STR
-TEST_OUT.nextState                #STR
-TEST_OUT.output                   #STR
-TEST_OUT.status                   #STR
-
-TEST_IN.inspectionLevel           #STR
-TEST_OUT.inspectionData           #TEST_DATA
-TEST_DATA.afterArguments          #STR
-TEST_DATA.afterInputPath          #STR
-TEST_DATA.afterParameters         #STR
-TEST_DATA.afterResultPath         #STR
-TEST_DATA.afterResultSelector     #STR
-TEST_DATA.input                   #STR
-TEST_DATA.result                  #STR
-TEST_DATA.variables               #STR
+                                  ┌──────────┐
+                                  │   HTTP   │
+                                  └──────────┘
 
 TEST_DATA.request                 #TEST_REQ
 TEST_REQ.body                     #STR
@@ -553,18 +1037,59 @@ TEST_RES.protocol                 #STR
 TEST_RES.statusCode               #STR
 TEST_RES.statusMessage            #STR
 
-AVAILABLE EVENT_TYPES ==>         #TaskStateEntered TaskStateExited TaskStateAborted
-                                  #SucceedStateEntered SucceedStateExited
-                                  #PassStateEntered PassStateExited
-                                  #ChoiceStateEntered ChoiceStateExited
-                                  #FailStateEntered
-                                  #ParallelStateEntered ParallelStateExited ParallelStateStarted ParallelStateSucceeded
-                                  #ParallelStateAborted ParallelStateFailed
-                                  #WaitStateEntered WaitStateExited WaitStateAborted
+                                  ┌────────────────┐
+                                  │   ENCRYPTION   │
+                                  └────────────────┘
 
-                                  ┌───────────────┐
-                                  │   TRANSFORM   │
-                                  └───────────────┘
+MACHINE.encryptionConfiguration   #ENCRYPT. Encrypts 'DMACHINE_JSON' and EVENTs at rest
+ACTIVITY.encryptionConfiguration  #ENCRYPT
+
+ENCRYPT.type                      #Either:
+                                  #  - 'AWS_OWNED_KEY' (def): AWS managed KMS KEY
+                                  #  - 'CUSTOMER_MANAGED_KMS_KEY': ENCRYPT.kmsKeyId
+ENCRYPT.kmsKeyId                  #KMS 'KEY_ARN' or (if same ACCOUNT) 'KEY_MID'
+
+ENCRYPT
+ .kmsDataKeyReusePeriodSeconds    #NUM of secs (min 1m, def 5m, max 15m) to re-use KMS data key, for performance and cost
+
+EXEC_GET.includedData             #STR
+MACHINE_GET.includedData          #STR
+
+                                  ┌─────────────┐
+                                  │   LOGGING   │
+                                  └─────────────┘
+
+MACHINE
+ .tracingConfiguration.enabled    #BOOL
+EXEC.traceHeader                  #STR
+
+MACHINE.loggingConfiguration      #MACHINE_LOGGING
+MACHINE_LOGGING.destinations[*]
+ .cloudWatchLogsLogGroup
+ .logGroupArn                     #'LOG_GROUP_ARN'
+MACHINE_LOGGING.level             #STR
+MACHINE_LOGGING
+ .includeExecutionData            #BOOL
+
+                                  ┌─────────────┐
+                                  │   BILLING   │
+                                  └─────────────┘
+
+EXEC.billingDetails               #EXEC_BILLING
+EXEC_BILLING
+ .billedDurationInMilliseconds    #NUM
+EXEC_BILLING.billedMemoryUsedInMB #NUM
+
+                                  ┌────────────────────┐
+                                  │   QUERY LANGUAGE   │
+                                  └────────────────────┘
+
+DMACHINE.QueryLanguage            #'JSONPath' (def) or 'JSONata'
+                                  #Prefer JSONata: simpler, more features, better maintained
+                                  #Inherited by child MACHINEs
+                                  #Only for top-level MACHINE
+DSTATE.QueryLanguage              #'JSONPath|JSONata'. Override for a given STATE
+                                  #Not inherited by child MACHINEs
 
 AVAILABLE EVENT_TYPES ==>         #EvaluationFailed
 EVENT_INFO.location               #STR
@@ -572,14 +1097,89 @@ EVENT_INFO.location               #STR
 EVENT_INFO.state                  #STR
                                   #With EVENT_TYPE EvaluationFailed
 
-                                  ┌────────────┐
-                                  │   LAMBDA   │
-                                  └────────────┘
+                                  ┌─────────────┐
+                                  │   JSONATA   │
+                                  └─────────────┘
 
-AVAILABLE EVENT_TYPES ==>         #LambdaFunctionScheduled LambdaFunctionScheduleFailed LambdaFunctionStarted
-                                  #LambdaFunctionStartFailed LambdaFunctionSucceeded LambdaFunctionTimedOut LambdaFunctionFailed
-EVENT_INFO.resource               #STR
-                                  #With EVENT_TYPE LambdaFunctionScheduled
+NOTATION ==>                     %#Notation for JSONata-specific documentation
+
+DSEXPR|DZEXPR|DFEXPR|DOEXPR      %#All mean the same thing: any value can be "{% ... %}" where ... is a JSONata query
+                                 %#Substituted with its result
+                                 %#On error, throws ERROR_CODE 'States.QueryEvaluationError'
+                                 %#Does not error if no match, just substitute with undefined
+
+$states.*                        %#Special DVARs, documented below
+                                 %#Cannot be set
+                                 %#Every query must start with either $states or $DVAR
+                                 %#  - not with $$ nor implicit|explicit $
+                                 %#     - e.g. $$.VAR, $.VAR or VAR
+                                 %#  - but can use nested implicit|explicit $
+                                 %#     - e.g. $states.input[VAR = true] or $states.input[$.VAR = true]
+
+                                  ┌──────────────┐
+                                  │   JSONPATH   │
+                                  └──────────────┘
+
+NOTATION ==>                     $#Notation for JSONPath-specific documentation
+
+$...                             $#JSONPath (see its doc)
+                                 $#Root value is INPUT (after transforming)
+                                 $#Exception: root value is OUTPUT (after transforming) in *.Assign (except DSTATE_CHOICE|WAIT.Assign)
+                                 $#Cannot use [(EXPR)] and [?(EXPR)]
+
+DSEXPR                           $#"Path". '$...' or '$$...'
+                                 $#Substituted with its result, which can be any JSON type
+DZEXPR                           $#"Reference path". DSEXPR but result must be a single value
+                                 $#Can only use .VAR [NUM]
+                                 $#No * .. [...,...] [...:...:...]
+VAL[_DZEXPR]                     $#Means VAL can be a DZEXPR, providing key is appended with 'Path'
+                                 $#E.g. DSTATE_TASK.TimeoutSecondsPath NUM_DZEXPR
+
+DFEXPR                           $#DSEXPR or 'DFUNC(...)'
+DOEXPR                           $#"Payload template". OBJ where top|nested PROPs:
+                                 $#  - value can be DFEXPR
+                                 $#  - providing key is 'PROP.$' (which becomes 'PROP')
+
+                                  ┌───────────────────────┐
+                                  │   INTRISIC FUNCTION   │
+                                  └───────────────────────┘
+
+DFUNC([ARG[_DFEXPR],...])        $#"Intrinsic function"
+                                 $#ARG can be '-quoted STR, NUM or null
+                                 $#Must \-escape ' { } \
+                                 $#On syntax error, throws ERROR_CODE 'States.IntrinsicFailure'
+
+States.*                         $#Available DFUNCs, among the following
+
+MathAdd(NUM, NUM2)->NUM3         $#NUM + NUM2
+
+Format(STR, VAL,...)->STR        $#Replaces any {} with each VAL
+                                 $#VAL must be STR|NUM|BOOL|null, not OBJ|ARR
+StringSplit(STR, "CHAR")
+ ->STR2_ARR                      $#STR.split("CHAR")
+
+JsonMerge(OBJ, OBJ2, BOOL)->OBJ3 $#Merge. BOOL is whether deep
+
+Array(VAL,...)->ARR              $#
+ArrayRange(NUM, NUM2, NUM3)->ARR $#From NUM (included) to NUM2 (included) with step NUM3
+                                 $#ARR max length 1e3
+ArrayLength(ARR)->NUM            $#ARR.length
+ArrayGetItem(ARR, NUM)->VAL      $#ARR[NUM]
+ArrayContains(ARR, VAL)->BOOL    $#ARR.includes()
+ArrayUnique(ARR)->ARR            $#[...new Set(ARR)]
+ArrayPartition(ARR, NUM)
+ ->ARR_ARR                       $#Chunks into sub-ARRs of length NUM
+
+StringToJson('JSON')->VAL        $#JSON.parse()
+JsonToString(DSEXPR)->'JSON'     $#JSON.stringify()
+Base64Encode(STR)->'BASE64'      $#STR max 1e4 chars
+Base64Decode('BASE64')->STR      $#STR max 1e4 chars
+
+Hash(STR, 'ALGO')->'HASH'        $#ALGO can be 'MD5' or 'SHA-1|256|384|512'
+                                 $#STR max 1e4 chars
+
+MathRandom(INT, INT2)->INT3      $#From INT (included) to INT2 (included). Pseudo-random
+UUID()->'UUIDv4'                 $#
 
                                   ┌──────────┐
                                   │   TAGS   │
@@ -598,386 +1198,3 @@ UntagResource()                   #Req: TAGS
 TAGS.resourceArn                  #'MACHINE_ARN|ACTIVITY_ARN'
 TAGS.tags
 MACHINE|ACTIVITY.tags             #TAG_PAIRS
-
-                                  ┌────────────────┐
-                                  │   DEFINITION   │
-                                  └────────────────┘
-
-DEFINITION                        #'DMACHINE_JSON'
-D*                                #Fields in 'DMACHINE_JSON'
-DMACHINE.Version                  #Always '1.0' (def)
-                                  #Only for top-level MACHINE
-
-DMACHINE|DSTATE.Comment           #STR. Description
-                                  #Only for top-level MACHINE
-
-DMACHINE.States.STATE             #DSTATE. Either a task or flow control
-                                  #'STATE' name max 80 chars
-DSTATE.Type                       #'STATE_TYPE'
-DSTATE.*                          #STATE_TYPE-specific
-
-DMACHINE.StartAt                  #'STATE'. First state
-
-TRANSITION ==>                    #DSTATE|DCHOICE.Next
-                                  #Cannot target a 'STATE' in parent|child MACHINEs
-DSTATE.Next                       #'STATE'. Next state
-
-TERMINAL STATE ==>                #Last STATE of a MACHINE, i.e. STATE_SUCCEED|FAIL or DSTATE.End true
-DSTATE.End                        #BOOL (def: false). Ends MACHINE successfully, but not parent ones
-                                  #Not with STATE_CHOICE|SUCCEED|FAIL
-DSTATE.Type                       #'Succeed'. STATE is STATE_SUCCEED
-                                  #End MACHINE successfully, but not parent ones
-
-ERRORS ==>                        #STATEs can throw ERRORs
-                                  #In addition to ERRORs documented here, any STATE might fail due to network ERRORs
-                                  #ERRORs are propagated to parent STATE|MACHINEs
-                                  #When ERROR reaches top-level MACHINE, ends it with failure, using ERROR as OUTPUT
-ERROR_OUTPUT.Error                #'ERROR_CODE'
-                                  #'States.*' reserved, i.e. should not use inside STATE_TASK
-ERROR_OUTPUT.Cause                #'MESSAGE'
-
-DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
-                                  #End MACHINE with failure, including parent ones
-                                  #OUTPUT is ERROR_OUTPUT
-DSTATE.Error                      #'ERROR_CODE'[_DDPATH] (def: ???). ERROR_OUTPUT.Error
-DSTATE.Cause                      #'MESSAGE'[_DDPATH] (def: none). ERROR_OUTPUT.Cause
-
-DSTATE.Catch                      #DCATCH_ARR. Executes some logic on ERROR
-                                  #Only with STATE_TASK|PARALLEL|MAP
-DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
-                                  #Can be ['States.ALL'] to match any ERROR_CODE
-                                  #  - must be last DCATCH in DCATCH_ARR
-                                  #  - does not match ERROR_CODE 'States.DataLimitExceeded' nor 'States.Runtime'
-DCATCH.Next                       #Like DSTATE.*. Required
-DCATCH's INPUT ==>                #In first matching DCATCH: STATE's INPUT
-                                  #In next ones: previous matching DCATCH's OUTPUT
-DCATCH.Output                     #ERROR_OUTPUT
-                                  #Def: current ERROR (not INPUT)
-DCATCH.Assign|ResultPath          #Like DSTATE.*
-
-DSTATE.Retry                      #DRETRY_ARR. Retry STATE if throws
-                                  #If a retry succeeds:
-                                  #  - STATE does not throw anymore
-                                  #  - CATCHs not run
-                                  #Def: no retry
-                                  #Only with STATE_TASK|PARALLEL|MAP
-DRETRY.ErrorEquals                #Same as DCATCH.ErrorEquals
-DRETRY.MaxAttempts                #NUM (def: 3). Max NUM of retries
-                                  #Can be 0 to not retry
-DRETRY.IntervalSeconds            #NUM (in secs, def: 1). Initial delay
-DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
-                                  #Does not decrease max NUM of retries
-DRETRY.BackoffRate                #NUM (def: 2). Multiplies delay after each retry
-DRETRY.JitterStrategy             #'NONE' (def) or 'FULL'. Applies random jitter to delay, which helps spread the load
-
-DMACHINE.TimeoutSeconds           #NUM (def: none). After NUMs, throw ERROR_CODE 'States.Timeout'
-                                  #Only for top-level MACHINE
-DSTATE_TASK.TimeoutSeconds        #NUM_DDPATH (in secs, def: 60).
-                                  #On timeout, throw ERROR_CODE 'States.Timeout'
-DSTATE_TASK.HeartbeatSeconds      #NUM_DDPATH (in secs, def: none). Heartbeat timeout, reset after each heartbeat
-                                  #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
-                                  #Must be < TimeoutSeconds
-
-INPUT                             #'VAL_JSON' (def: '{}') passed to each STATE
-                                  #INPUT to first STATE is set by caller, for a given EXEC
-                                  #INPUT to other STATEs is OUTPUT of previous STATE
-                                  #Max 256KB (else throw ERROR_CODE 'States.DataLimitExceeded')
-OUTPUT                            #'VAL_JSON' (def: INPUT) returned by each STATE
-                                  #OUTPUT from final STATE is EXEC's output
-                                  #Max 256KB (else throw ERROR_CODE 'States.DataLimitExceeded')
-
-CONTEXT                           #'OBJ_JSON' passed to each STATE
-                                  #Set by caller, for a given EXEC
-
-DSTATE.Assign.DVAR                #VAL. "State machine variable"
-                                  #Sets $DVAR in any later STATE (not current STATE)
-                                  #To use inside JSONPath|JSONata
-                                  #Child MACHINEs:
-                                  #  - have their own DVAR scope
-                                  #  - can use upper scope's DVARs, but not set them
-                                  #  - cannot use lower|sibling scopes' DVARs
-                                  #DVAR:
-                                  #  - max 80 chars
-                                  #  - ID_Continue: letters-like, numbers-like, _, diacretics, U+200C U+200D (zero-width space)
-                                  #  - first char: ID_Start: letters-like
-                                  #Not with STATE_SUCCEED|FAIL
-
-DMACHINE.QueryLanguage            #'JSONPath' (def) or 'JSONata'
-                                  #Inherited by child MACHINEs
-                                  #Only for top-level MACHINE
-DSTATE.QueryLanguage              #Override for a given STATE
-                                  #Not inherited by child MACHINEs
-
-JSONPATH ==>                      #
-$...                              #JSONPath (see its doc) applied on INPUT (after transforming)
-                                  #Exception: applied on OUTPUT (after transforming) in *.Assign (except DSTATE_CHOICE|WAIT.Assign)
-                                  #Cannot use [(EXPR)] and [?(EXPR)]
-$$...                             #JSONPath applied on CONTEXT
-
-DPATH                             #'$...' or '$$...'
-                                  #Substituted by its result, which can be any JSON type
-DDPATH                            #DPATH but result must be a single value
-                                  #Can only use .VAR [NUM]
-                                  #No * .. [...,...] [...:...:...]
-VAL[_DDPATH]                      #Means VAL can be a DDPATH, providing key is appended with 'Path'
-                                  #E.g. DSTATE_TASK.TimeoutSecondsPath NUM_DDPATH
-DEXPR                             #DPATH or 'DFUNC(...)'
-DEXPR_OBJ                         #OBJ where top|nested PROPs can be DEXPR
-                                  #To use DEXPR as value, key must be 'PROP.$', which becomes 'PROP'
-
-TRANSFORMS ==>                    #Each defaults to keeping INPUT|OUTPUT as is
-                                  #Order is:
-                                  #  - InputPath -> Parameters
-                                  #  - ResultSelector -> ResultPath -> OutputPath
-DSTATE.InputPath                  #DPATH. Transforms INPUT
-                                  #null sets INPUT as empty OBJ
-                                  #Not with STATE_FAIL
-DSTATE.Parameters                 #DEXPR_OBJ. Transforms INPUT
-                                  #Throws ERROR_CODE 'States.ParameterPathFailure' if no DPATH match
-                                  #Only with STATE_TASK|MAP|PARALLEL|PASS
-
-DSTATE.ResultSelector             #DEXPR_OBJ. Transforms OUTPUT
-                                  #Only with STATE_TASK|MAP|PARALLEL
-DSTATE.ResultPath                 #DDPATH. Sets OUTPUT as {...INPUT, DDPATH: OUTPUT}
-                                  #Overrides INPUT.DDPATH, does not merge to it
-                                  #null sets OUTPUT as {...INPUT}
-                                  #Cannot use CONTEXT nor $DVAR
-                                  #Throws ERROR_CODE 'States.ResultPathMatchFailure' if no DPATH match
-                                  #Only with STATE_TASK|MAP|PARALLEL|PASS
-DSTATE.OutputPath                 #DPATH. Transforms OUTPUT
-                                  #null sets OUTPUT as empty OBJ
-                                  #Not with STATE_FAIL
-
-DFUNC([ARG[_DEXPR],...])          #"Intrinsic function"
-                                  #ARG can be '-quoted STR, NUM or null
-                                  #Must \-escape ' { } \
-                                  #Throws ERROR_CODE 'States.IntrinsicFailure' if syntax error
-States.*                          #Available DFUNCs, among the following
-MathAdd(NUM, NUM2)->NUM3          #NUM + NUM2
-Format(STR, VAL,...)->STR         #Replaces any {} with each VAL
-                                  #VAL must be STR|NUM|BOOL|null, not OBJ|ARR
-StringSplit(STR, "CHAR")->STR2_ARR#STR.split("CHAR")
-JsonMerge(OBJ, OBJ2, BOOL)->OBJ3  #Merge. BOOL is whether deep
-Array(VAL,...)->ARR               #
-ArrayRange(NUM, NUM2, NUM3)->ARR  #From NUM (included) to NUM2 (included) with step NUM3
-                                  #ARR max length 1e3
-ArrayLength(ARR)->NUM             #ARR.length
-ArrayGetItem(ARR, NUM)->VAL       #ARR[NUM]
-ArrayContains(ARR, VAL)->BOOL     #ARR.includes()
-ArrayUnique(ARR)->ARR             #[...new Set(ARR)]
-ArrayPartition(ARR, NUM)->ARR_ARR #Chunks into sub-ARRs of length NUM
-StringToJson('JSON')->VAL         #JSON.parse()
-JsonToString(DPATH)->'JSON'       #JSON.stringify()
-Base64Encode(STR)->'BASE64'       #STR max 1e4 chars
-Base64Decode('BASE64')->STR       #STR max 1e4 chars
-Hash(STR, 'ALGO')->'HASH'         #ALGO can be 'MD5' or 'SHA-1|256|384|512'
-                                  #STR max 1e4 chars
-MathRandom(INT, INT2)->INT3       #From INT (included) to INT2 (included). Pseudo-random
-UUID()->'UUIDv4'                  #
-
-DSTATE.Type                       #'Pass'. STATE is STATE_PASS
-                                  #Noop. Potential goals: set OUTPUT, set DVARs, apply parent STATE_MAP
-DSTATE_PASS.Result                #OUTPUT (def: INPUT)
-                                  #Cannot use DPATH|DFUNCs
-
-DSTATE.Type                       #'Choice'. STATE is STATE_CHOICE
-                                  #Like a `switch` statement
-DSTATE_CHOICE.Default             #'STATE'
-                                  #Def: throw ERROR_CODE 'States.NoChoiceMatched'
-DSTATE_CHOICE.Choices             #DCHOICE_ARR
-                                  #Cannot be empty
-DCHOICE.Next                      #Like DSTATE.*. Required
-DCHOICE.Assign                    #Like DSTATE.*
-                                  #DSTATE_CHOICE.Assign is not used if any DCHOICE matches (even if it has no DCHOICE.Assign)
-
-DCHOICE.*                         #DCOND, i.e. condition deciding whether to pick DCHOICE
-DCHOICE.Variable                  #DPATH. VAL to compare
-
-DCOND.Not                         #DCOND2
-DCOND.And|Or                      #DCOND_ARR
-                                  #Cannot be empty
-
-DCOND.IsPresent                   #BOOL. VAL !== undefined
-DCOND.IsNull                      #BOOL. VAL === null
-
-DCOND.IsBoolean                   #BOOL. VAL is a BOOL
-DCOND.BooleanEquals               #BOOL[_DDPATH]. VAL === BOOL
-
-DCOND.IsNumeric                   #BOOL. VAL is a NUM
-DCOND.NumericEquals               #NUM[_DDPATH]. VAL === NUM
-DCOND
- .NumericLess|GreaterThan[Equals] #NUM[_DDPATH]. VAL < <= > >= NUM
-
-DCOND.IsString                    #BOOL. VAL is a STR
-DCOND.StringEquals                #STR[_DDPATH]. VAL === STR
-DCOND.StringMatches               #'GLOB'. VAL matches GLOB
-                                  #GLOB can only use *
-                                  #Must \-escape * \
-DCOND
- .StringLess|GreaterThan[Equals]  #STR[_DDPATH]. VAL < <= > >= STR
-
-DCOND.IsTimestamp                 #BOOL. VAL is a DATE
-DCOND.TimestampEquals             #'DATE'[_DDPATH]. VAL === DATE
-DCOND
-.TimestampLess|GreaterThan[Equals]#'DATE'[_DDPATH]. VAL < <= > >= DATE
-
-DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
-                                  #Executes multiple child MACHINEs in parallel, with same INPUT
-                                  #OUTPUT is ARR of their OUTPUTs
-                                  #If any child MACHINE throws, other childs are terminated
-                                  #On error, throws ERROR_CODE 'States.BranchFailed'
-DSTATE_PARALLEL.Branches          #DMACHINE_ARR
-
-DSTATE.Type                       #'Map'. STATE is STATE_MAP
-                                  #Executes one child MACHINEs per ITEM_ARR, in parallel
-                                  #OUTPUT is ARR of their OUTPUTs
-                                  #Order is InputPath -> ItemReader -> ItemsPath -> ItemSelector -> ItemBatcher
-DSTATE_MAP.ItemProcessor          #DMACHINE
-
-DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
-                                  #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
-DMAP_CONF.Mode                    #'INLINE' or 'DISTRIBUTED'???
-DMAP_CONF.ExecutionType           #'STANDARD' (def) or 'EXPRESS'???
-                                  #Only if DMAP_CONF.Mode 'DISTRIBUTED'
-
-DSTATE_MAP.ItemReader             #DREADER. Set INPUT using S3 OBJECTs
-                                  #On error, throws ERROR_CODE:
-                                  #  - 'States.Permissions': auth-related
-                                  #  - 'States.ItemReaderFailed': else
-DREADER.Resource                  #Always 'arn:aws:states:::s3:getObject'
-DREADER.Parameters                #DREADER_PARAMS, as DEXPR_OBJ
-DREADER_PARAMS.Bucket             #S3 'BUCKET'
-                                  #Must be in same ACCOUNT|REGION as MACHINE
-DREADER_PARAMS.Prefix             #'PREFIX'. S3 OBJECT prefix. Does ListObjectsV2()
-                                  #New INPUT is response's OBJECTS.Contents OBJECT_ARR
-                                  #Excludes proper FOLDERs, i.e. 'OBJECT' ends with delimiter (e.g. /) and has empty contents
-                                  #See also S3 JOB_LAMBDA, as an alternative
-                                  #Must allow:
-                                  #  - PACTION s3:ListBucket
-                                  #  - on MACHINE.roleArn
-                                  #  - Resource BUCKET
-                                  #  - COND_KEY s3:prefix 'PREFIX'
-DREADER_PARAMS.Key                #S3 'OBJECT'. Alternative to DREADER_PARAMS.Prefix, doing GetObject()
-                                  #New INPUT is ARR items contained in OBJECT
-                                  #Must allow:
-                                  #  - PACTION s3:GetObject
-                                  #  - on MACHINE.roleArn
-                                  #  - Resource:
-                                  #     - JSON|CSV: OBJECT
-                                  #     - MANIFEST:
-                                  #        - arn:aws:s3:::DEST_PREFIX/SOURCE_BUCKET/INVENTORY/YYYY-MM-DDTHH-MMZ/manifest.json
-                                  #        - arn:aws:s3:::DEST_PREFIX/SOURCE_BUCKET/INVENTORY/data/*
-DREADER.ReaderConfig              #DREADER_CONF
-                                  #Only if DEADER_PARAMS.Key used
-DREADER_CONF.InputType            #One of:
-                                  #  - 'JSON': OBJ_ARR
-                                  #     - max 8MB
-                                  #     - max 256KB after DSTATE_MAP.ItemsPath|ItemSelector applied
-                                  #  - 'CSV'
-                                  #     - values are always considered STRs
-                                  #     - same limits as CSV
-                                  #  - 'MANIFEST': S3 INVENTORY MANIFEST
-                                  #     - New INPUT is INVENTORY_LINE_ARR
-                                  #     - max 10GB
-DREADER_CONF.MaxItems             #NUM[_DDPATH] (def|max: 1e8). Only use first NUM items
-DREADER_CONF.CSVHeaderLocation    #Whether OBJ keys are specified:
-                                  #  - 'FIRST_ROW' (def): as first CSV row
-                                  #  - 'GIVEN': with DREADER_CONF.CSVHeaders
-                                  #OBJ keys max 10KB
-                                  #Only if DREADER_CONF.InputType 'CSV'
-DREADER_CONF.CSVHeaders           #'KEY'_ARR
-
-DSTATE_MAP.ItemsPath              #DDPATH selecting ITEM_ARR
-                                  #Def: INPUT, which must be an ARR
-DSTATE_MAP.ItemSelector           #DEXPR_OBJ, transforming each ITEM
-                                  #Def: keep ITEM as is
-                                  #Like other DPATHs, $ is INPUT (not ITEM_ARR nor ITEM)
-                                  #  - i.e. uses DSTATE_MAP.InputPath's result, but not DSTATE_MAP.ItemsPath
-                                  #$$.Map.Item:
-                                  #  - Value VAL: ITEM's value
-                                  #     - i.e. uses both DSTATE_MAP.InputPath|ItemsPath
-                                  #  - Index NUM (0-based)
-
-DSTATE_MAP.ItemBatcher            #DBATCH. Pass BATCHs to each MACHINE, i.e. groups of multiple ITEMs
-                                  #INPUT becomes {Items ITEM_ARR, BatchInput VAL}
-                                  #OUTPUT is ARR of each MACHINE's OUTPUT, i.e. one item per BATCH
-                                  #Def: no BATCHs
-DBATCH.MaxItemsPerBatch           #Max NUM[_DDPATH] of ITEMs per BATCH
-DBATCH.MaxInputBytesPerBatch      #Max NUM[_DDPATH] (in bytes, def|max 256KB) total size per BATCH
-                                  #Must be explicitly set if no MaxItemsPerBatch
-                                  #Combined with MaxItemsPerBatch (if any)
-DBATCH.BatchInput                 #VAL (def: undefined), to set as INPUT.BatchInput
-
-DSTATE_MAP.ResultWriter           #DWRITER. Write each OUTPUT item as a JSON S3 OBJECT, using PutObject()
-                                  #Each OUTPUT item is a DWRITER_OUTPUT
-                                  #Order is ResultWriter -> ResultSelector -> ResultPath -> OutputPath
-                                  #No size limit initial total OUTPUT (can be > 256KB)
-                                  #  - as opposed to total DWRITER_OUTPUTs, which is max 256KB
-                                  #On error, throws ERROR_CODE:
-                                  #  - 'States.Permissions': auth-related
-                                  #  - 'States.ResultWriterFailed': else
-DWRITER.Resource                  #Always 'arn:aws:states:::s3:putObject'
-DWRITER.Parameters                #DWRITER_PARAMS, as DEXPR_OBJ
-DWRITER_PARAMS.Bucket             #S3 'BUCKET'
-                                  #Must be in same ACCOUNT|REGION as MACHINE
-DREADER_PARAMS.Prefix             #'PREFIX'. S3 OBJECT prefix
-                                  #Where is it written to???
-                                  #Must allow:
-                                  #  - PACTION s3:PutObject|GetObject|ListMultipartUploadParts|AbortMultipartUpload
-                                  #  - on MACHINE.roleArn
-                                  #  - Resource BUCKET/PREFIX/*
-DWRITER_OUTPUT.statusCode         #STATUS_NUM
-DWRITER_OUTPUT.inputReceived      #OBJ. OUTPUT item
-
-DSTATE_MAP.MaxConcurrency         #NUM[_DDPATH] (def: 0, i.e. unlimited) of MACHINEs to run at once
-                                  #Can be 1 for serial
-
-DSTATE_MAP.ToleratedFailureCount  #When > NUM[_DDPATH] (def: 0) ITEMs throw:
-                                  #  - terminate every child MACHINE
-                                  #  - make DSTATE_MAP throw ERROR_CODE 'States.ExceedToleratedFailureThreshold'
-                                  #Else, ITEMs that throw produce ERROR_OUTPUTs
-DSTATE_MAP
- .ToleratedFailurePercentage      #Same but as NUM[_DDPATH] 0-100 percentage (def: 0)
-
-DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
-                                  #Wait for a specific duration
-DSTATE_WAIT.Timestamp             #'DATE'[_DDPATH]
-DSTATE_WAIT.Seconds               #NUM[_DDPATH]. Alternative to Timestamp
-
-DSTATE.Type                       #'Task'. STATE is STATE_TASK
-                                  #Om error, throws ERROR_CODE:
-                                  #  - 'States.Permissions': auth-related
-                                  #  - 'States.TaskFailed': else
-DSTATE_TASK.Resource              #'ARN'. Can be:
-                                  #  - 'TASK_ARN'
-                                  #  - 'FUNC_ARN': run Lambda FUNCTION, with INPUT|OUTPUT as REQ|RES
-DSTATE_TASK.Credentials           #DCREDS, as DEXPR_OBJ
-DCREDS.RoleArn                    #'ROLE_ARN' assumed by Resource
-
-JSONATA ==>                       #
-                                  #Prefer over JSONPath: simpler, more features, better maintained
-                                  #On error, throws ERROR_CODE 'States.QueryEvaluationError'
-DSTATE.Arguments                  #INPUT (def: keep as is), i.e. transforms it
-                                  #Only with STATE_TASK|PARALLEL
-DSTATE.Output                     #OUTPUT (def: keep as is), i.e. transforms it
-                                  #Not with STATE_FAIL
-"{% QUERY %}": anywhere in VAL of DSTATE.Arguments|Output
-Assignments in a QUERY ($VAR := VAL) is only for that QUERY
-$states.input                     #INPUT
-$states.context                   #CONTEXT
-$states.result                    #OUTPUT. Cannot be set
-                                  #Only in DSTATE.Output|Assign
-                                  #Only with STATE_TASK|PARALLEL|MAP
-$states.errorOutput               #ERROR_OUTPUT. Cannot be set
-                                  #Only in DCATCH.Output|Assign
-                                  #Only with STATE_TASK|PARALLEL|MAP
-DSTATE.InputPath, DSTATE.Parameters -> Arguments
-DSTATE.ResultSelector, DSTATE|DCATCH.ResultPath, DSTATE.OutputPath, DCATCH.Output, DSTATE_PASS.Result -> Output
-Cannot use $$
-Cannot use top-level $ (including implicitely): must use $DVAR or $states
-  - can still use $ (including implicitely) not at top-level
-Cannot use DFUNCs
-DCHOICE.Variable, DCOND -> DCHOICE.Condition BOOL (JSONata, required) + DCHOICE.Output
-Check over all: DPATH, DDPATH, DEXPR, DEXPR_OBJ???
-DDPATH -> allows JSONata anywhere instead???
-  - no [Path] needed
