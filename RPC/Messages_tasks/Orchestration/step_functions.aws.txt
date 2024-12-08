@@ -8,8 +8,6 @@ VERSION ==>                       #2024-11-28
 TODO:
   - CDK:
      - check new_services doc, CDK section
-     - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions
-     - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks
      - document which properties are supported by --hotswap
      - API Gateway:
         - StepFunctionsIntegration:
@@ -127,6 +125,16 @@ AWS/States/ConsumedCapacity       #NUM of requests per second
 AWS/States/ThrottledEvents        #NUM of throttled requests
 
 DVAR APIName                      #'ACTION'. With above METRICs
+
+                                  ┌────────────────────────────┐
+                                  │   THROTTLING METRICS IAC   │
+                                  └────────────────────────────┘
+
+StateTransitionMetric.metric
+ ('METRIC', CMETRIC_OPTS)
+ ->CMETRIC                        #Must pass CMETRIC_OPTS.dimensionsMap { APIName: 'ACTION' }
+StateTransitionMetric.metricMETRIC
+ (CMETRIC_OPTS)->CMETRIC          #Same, except uses statistic 'Sum' for ThrottledEvents
 
                                   ┌─────────────┐
                                   │   PRICING   │
@@ -637,7 +645,7 @@ CSTATE.endStates is:
 CSTATE.next(CCHAINABLE)->CCHAIN
   - DSTATE.Next 'STATE2'
   - if not called: sets DSTATE.End true instead
-  - only with: CustomState, Pass, Wait, Parallel, Map, others???
+  - only with: CustomState, Pass, Wait, Parallel, Map, Task
      - not with Succeed, Fail, Choice
 CCHAIN|CFRAGMENT.next(CCHAINABLE)->CCHAIN2
   - CCHAIN|CFRAGMENT.endStates[*] = CCHAIN|CFRAGMENT.endStates[*].next(CCHAINABLE)
@@ -679,7 +687,7 @@ CSTATE.toStateJson() -> DSTATE
 CSTATE.validateState(): called at end of construction, for validation
 
 CSTATE_OPTS.comment: DSTATE.Comment
-  - only with Succeed, Fail, Pass, Wait, Choice, Parallel, Map, others???
+  - only with Succeed, Fail, Pass, Wait, Choice, Parallel, Map, Task
      - not with CustomState
 
 CSTATE_OPTS.inputPath: DSTATE.InputPath
@@ -706,7 +714,7 @@ CSTATE_OPTS.resultSelector: DSTATE.ResultSelector
   - can be a DOEXPR
 
 CSTATE.addRetry(CRETRY_OPTS)->CSTATE
-  - only with: CustomState, Parallel, Map, others???
+  - only with: CustomState, Parallel, Map, Task
 CRETRY_OPTS.errors: DRETRY.ErrorEquals
   - def: ['States.ALL']
   - 'States.ALL' always at the end
@@ -719,7 +727,7 @@ CRETRY_OPTS.jitterStrategy: DRETRY.JitterStrategy
 CRETRY_OPTS.maxDelay: DURATION. DRETRY.MaxDelaySeconds
 
 CSTATE.addCatch(CCHAINABLE[, CCATCH_OPTS])->CSTATE
-  - only with: CustomState, Parallel, Map, others???
+  - only with: CustomState, Parallel, Map, Task
   - CCHAINABLE.startState is DCATCH.Next
 CCATCH_OPTS.errors: DCATCH.ErrorEquals
   - rest is like CRETRY_OPTS.errors
@@ -792,9 +800,7 @@ new [Distributed]Map(...CARGS[, CMAP_OPTS])
   - inherits from CSTATE
   - STATE_MAP
   - Map|DistributedMap uses DMAP_CONF.Mode 'INLINE|DISTRIBUTED'
-  - allows to MACHINE.roleArn PACTIONs:???
-     - states:StartExecution on Resource MACHINE_ARN
-     - states:DescribeExection|StopExecution on Resource MACHINE_ARN:* (i.e. any EXEC in MACHINE)
+  - if INLINE, automatically allows states:*Execution as described above
 CMAP_OPTS.*: CSTATE_OPTS.*
 CMAP.itemProcessor(CCHAINABLE)->CMAP: DSTATE_MAP.ItemProcessor
 CMAP_OPTS.mapExecutionType: DMAP_CONF.ExecutionType
@@ -825,6 +831,26 @@ CMAP_OPTS.itemReader: DREADER. One of:
 CMAP_OPTS.itemBatcher: DBATCH. new ItemBatcher(OPTS)
   OPTS.max*|batchInput: DBATCH.*
   OPTS.max*Path CDZEXPR: DBATCH.*
+
+new Task(...CARGS[, CTASK_OPTS])
+  - inherits from CSTATE
+  - STATE_TASK
+CTASK_OPTS.*: CSTATE_OPTS.*
+CTASK_OPTS.taskTimeout CTIMEOUT???
+CTASK_OPTS.heartbeatTimeout CTIMEOUT???
+CTASK_OPTS.credentials CCREDS???
+CTASK_OPTS.integrationPattern 'REQUEST_RESPONSE|WAIT_FOR_TASK_TOKEN|RUN_JOB'???
+
+Custom TASK:
+  - must inherit from TaskBase
+  - can define following CTASK.*
+CTASK._renderTask                 #FUNC()->DTASK_OBJ. Required
+CTASK.taskPolicies                #CSTATEMENT_ARR allowed to MACHINE.roleArn
+CTASK.taskMetrics                 #CTASK_METRICS
+CTASK_METRICS.metricDimensions    #DOBJ set on CTASK.metric*(...)
+CTASK_METRICS.metricPrefixSingular#'...'. Allows calling CTASK.metric...SUFFIX(), for 'AWS/States/...SUFFIX',
+                                  #with SUFFIX RunTime, ScheduleTime, Time
+CTASK_METRICS.metricPrefixPlural  #Same for SUFFIX Scheduled, Started, Succeeded, Failed, [Heartbeat]TimedOut
 
 JsonPath|Data|Context.*:
   - CD*EXPR
@@ -875,10 +901,12 @@ CMACHINE_OPTS.comment             #DMACHINE.Comment
                                   #Must use DefinitionBody.fromChainable()
 
 Still to do:
-  - each STATE in https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions/lib/states
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/input.ts
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/task-credentials.ts
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/state-transition-metrics.ts
+  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/states/task.ts
+     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/states/task-base.ts
+     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/input.ts
+     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/lib/task-credentials.ts
+     - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks
+  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions/README.md
 
                                   ┌─────────────────────────┐
                                   │   DEFINITION COMPOSER   │
@@ -1392,7 +1420,7 @@ AWS/States/ProvisionedBucketSize
 AWS/States/ConsumedCapacity
 AWS/States/ThrottledEvents        #Same as above
 
-DVAR ServiceMetric                #Must be 'true' with the above 4 METRICs to show STATE_EXEC throttling
+DVAR ServiceMetric                #Must be 'StateTransition' with the above 4 METRICs to show STATE_EXEC throttling
 
                                   ┌──────────────────────┐
                                   │   FLOW METRICS IAC   │
@@ -1400,6 +1428,12 @@ DVAR ServiceMetric                #Must be 'true' with the above 4 METRICs to sh
 
 ICMACHINE.metricThrottled
  ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR StateMachineArn, statistic 'Sum'
+
+StateTransitionMetric.metric
+ ('METRIC'[, CMETRIC_OPTS])
+ ->CMETRIC                        #Sets DVAR ServiceMetric 'StateTransition'
+StateTransitionMetric.metricMETRIC
+ (CMETRIC_OPTS)->CMETRIC          #Same, except uses statistic 'Sum' for ThrottledEvents
 
                                   ┌───────────────┐
                                   │   FLOW LINT   │
@@ -1587,7 +1621,9 @@ DVAR StateMachineArn
 
 ICMACHINE.metricTimedOut
  ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR StateMachineArn, statistic 'Sum'
-CACTIVITY
+CLAMBDA_TASK.metricTimedOut
+ ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR LambdaFunctionArn|Qualifier, statistic 'Sum'
+CACTIVITY[_TASK]
  .metric[Heartbeat]TimedOut
  ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR ActivityArn, statistic 'Sum'
 
@@ -1777,7 +1813,10 @@ EVENT_TYPE MapStateFailed         #On STATE_MAP failure
                                   │   MAP MAIN AUTH   │
                                   └───────────────────┘
 
-PACTION states:StartExecution     #Must be allowed on MACHINE.roleArn, with Resource MACHINE_ARN (itself)
+PACTION states:StartExecution     #Must be allowed for MACHINE.roleArn, on itself, i.e. Resource MACHINE_ARN
+                                  #Not if DMAP_CONF.Mode 'INLINE'
+PACTION states:DescribeExecution  #Must be allowed for MACHINE.roleArn, on any EXEC on itself,
+ |StopExecution                   #i.e. Resource 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE:*'
                                   #Not if DMAP_CONF.Mode 'INLINE'
 
                                   ┌───────────────────┐
@@ -2222,6 +2261,16 @@ AWS/States/LambdaFunctionsFailed  #NUM of LAMBDA_TASKs failed
 
 DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
 
+                                  ┌─────────────────────────────┐
+                                  │   TASK LAMBDA METRICS IAC   │
+                                  └─────────────────────────────┘
+
+CLAMBDA_TASK.metric
+ ('METRIC'[, CMETRIC_OPTS])
+ ->CMETRIC                        #Sets DVAR LambdaFunctionArn|Qualifier, statistic 'Sum'
+CLAMBDA_TASK.metricMETRIC         #Same except 'METRIC' omits 'LambdaFunction' prefix, e.g. CTASK.metricRunTime()
+ ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
+
                                   ┌──────────────────┐
                                   │   TASK SERVICE   │
                                   └──────────────────┘
@@ -2513,11 +2562,11 @@ DVAR ActivityArn                  #'ACTIVITY_ARN'. With AWS/States/Activit*
                                   │   TASK ACTIVITY RUN METRICS IAC   │
                                   └───────────────────────────────────┘
 
-CACTIVITY.metric
+CACTIVITY[_TASK].metric
  ('METRIC'[, CMETRIC_OPTS])
  ->CMETRIC                        #Sets DVAR ActivityArn, statistic 'Sum'
-CACTIVITY.metricMETRIC            #Same except 'METRIC' omits 'Activity' prefix, e.g. CACTIVITY.metricRunTime()
- ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for ActivityRuntime|ActivityScheduleTime
+CACTIVITY[_TASK].metricMETRIC     #Same except 'METRIC' omits 'Activity' prefix, e.g. CACTIVITY.metricRunTime()
+ ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
 
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
