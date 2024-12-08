@@ -40,6 +40,10 @@ TODO:
      - https://docs.aws.amazon.com/infrastructure-composer/latest/dg/using-composer-external-files-new.html
      - connection from API Gateway API to Step Functions STATE_MACHINE
   - https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html
+     - already done:
+        - Processing input and output:
+           - Map state input and output fields in Step Functions:
+              - ItemReader
   - https://github.com/awslabs/statelint
 
                                   ┌─────────┐
@@ -624,12 +628,15 @@ ERRORS ==>                        #STATEs can throw ERRORs
                                   #In addition to ERRORs documented here, any STATE might fail due to network ERRORs
                                   #ERRORs are propagated to parent STATE|MACHINEs
                                   #When ERROR reaches top-level MACHINE, ends it with failure, using ERROR as OUTPUT
-ERROR_CODE                        #'States.*' reserved, i.e. should not use inside STATE_TASK
+ERROR_OUTPUT.Error                #'ERROR_CODE'
+                                  #'States.*' reserved, i.e. should not use inside STATE_TASK
+ERROR_OUTPUT.Cause                #'MESSAGE'
 
 DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
                                   #End MACHINE with failure, including parent ones
-DSTATE.Error                      #'ERROR_CODE'[_DDPATH] (def: ???). OUTPUT.Error
-DSTATE.Cause                      #'MESSAGE'[_DDPATH] (def: none). OUTPUT.Cause
+                                  #OUTPUT is ERROR_OUTPUT
+DSTATE.Error                      #'ERROR_CODE'[_DDPATH] (def: ???). ERROR_OUTPUT.Error
+DSTATE.Cause                      #'MESSAGE'[_DDPATH] (def: none). ERROR_OUTPUT.Cause
 
 DSTATE.Catch                      #DCATCH_ARR. Executes some logic on ERROR
                                   #Only with STATE_TASK|PARALLEL|MAP
@@ -639,9 +646,7 @@ DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
 DCATCH.Next                       #Like DSTATE.*. Required
 DCATCH's INPUT ==>                #In first matching DCATCH: STATE's INPUT
                                   #In next ones: previous matching DCATCH's OUTPUT
-DCATCH.Output                     #OUTPUT, which must include:
-                                  #  - OUTPUT.Error 'ERROR_CODE'
-                                  #  - OUTPUT.Cause 'MESSAGE'
+DCATCH.Output                     #ERROR_OUTPUT
                                   #Def: current ERROR (not INPUT)
 DCATCH.Assign|ResultPath          #Like DSTATE.*
 
@@ -741,7 +746,7 @@ DVAR states                       #
 DFUNC([ARG[_DEXPR],...])          #"Intrinsic function"
                                   #ARG can be '-quoted STR, NUM or null
                                   #Must \-escape ' { } \
-                                  #Throws ERROR_CODE 'States.IntrinsicFailure' if error
+                                  #Throws ERROR_CODE 'States.IntrinsicFailure' if syntax error
 States.*                          #Available DFUNCs, among the following
 Format(STR, VAL,...)              #STR but replaces any {} with each VAL
                                   #VAL must be STR|NUM|BOOL|null, not OBJ|ARR
@@ -793,16 +798,62 @@ DCOND.TimestampEquals             #'DATE'[_DPATH]. VAL === DATE
 DCOND
 .TimestampLess|GreaterThan[Equals]#'DATE'[_DPATH]. VAL < <= > >= DATE
 
-DSTATE.Type                       #'Map'. STATE is STATE_MAP
-DSTATE_MAP.ItemProcessor          #Child DMACHINE
-DSTATE_MAP.MaxConcurrency         #NUM
-
 DSTATE.Type                       #'Parallel'. STATE is STATE_PARALLEL
-                                  #Executes multiple child MACHINEs in parallel
-                                  #Each uses current INPUT
+                                  #Executes multiple child MACHINEs in parallel, with same INPUT
                                   #OUTPUT is ARR of their OUTPUTs
                                   #If any child MACHINE throws, other childs are terminated
 DSTATE_PARALLEL.Branches          #DMACHINE_ARR
+
+DSTATE.Type                       #'Map'. STATE is STATE_MAP
+                                  #Executes one child MACHINEs per ITEM_ARR, in parallel
+                                  #OUTPUT is ARR of their OUTPUTs
+                                  #If any child MACHINE throws, other childs are terminated???
+DSTATE_MAP.ItemProcessor          #DMACHINE
+
+DSTATE_MAP.ItemReader             #DREADER. Use CSV|JSON|MANIFEST S3 OBJECT as INPUT
+                                  #Uses OBJECT_ARR, as returned by ListObjectsV2()'s OBJECTS.Contents
+                                  #Done after DSTATE_MAP.InputPath
+                                  #On error, throws ERROR_CODE 'States.ItemReaderFailed'
+DREADER.Resource                  #Always 'arn:aws:states:::s3:getObject'
+DREADER.Parameters                #DREADER_PARAMS, as DEXPR_OBJ
+DREADER_PARAMS.Bucket             #S3 'BUCKET'
+                                  #Must be in same ACCOUNT|REGION as MACHINE
+DREADER_PARAMS.Key                #S3 'OBJECT'
+DREADER.ReaderConfig              #DREADER_CONF
+DREADER_CONF.InputType            #One of:
+                                  #  - 'CSV'
+                                  #  - 'JSON': OBJ_ARR
+                                  #  - 'MANIFEST': S3 INVENTORY MANIFEST
+DREADER_CONF.MaxItems             #NUM[_DDPATH] (def|max: 1e8). Only use first NUM items
+DREADER_CONF.CSVHeaderLocation    #Whether OBJ keys are specified:
+                                  #  - 'FIRST_ROW' (def): as first CSV row
+                                  #  - 'GIVEN': with DREADER_CONF.CSVHeaders
+                                  #OBJ keys max 10KB
+                                  #Only if InputType 'CSV'
+DREADER_CONF.CSVHeaders           #'KEY'_ARR
+
+DSTATE_MAP.ItemsPath              #DDPATH selecting ITEM_ARR
+                                  #Done after DSTATE_MAP.ItemReader
+                                  #Def: INPUT, which must be an ARR
+DSTATE_MAP.ItemSelector           #DEXPR_OBJ, transforming each ITEM
+                                  #Done after DSTATE_MAP.ItemsPath
+                                  #Def: keep ITEM as is
+                                  #Like other DPATHs, $ is INPUT (not ITEM_ARR nor ITEM)
+                                  #  - i.e. uses DSTATE_MAP.InputPath's result, but not DSTATE_MAP.ItemsPath
+                                  #$$.Map.Item:
+                                  #  - Value VAL: ITEM's value
+                                  #     - i.e. uses both DSTATE_MAP.InputPath|ItemsPath
+                                  #  - Index NUM (0-based)
+
+DSTATE_MAP.ItemBatcher            #OBJ???
+
+DSTATE_MAP.ResultWriter           #OBJ???
+
+DSTATE_MAP.MaxConcurrency         #NUM (def: 0, i.e. unlimited)
+DSTATE_MAP.ToleratedFailureCount  #When > NUM (def: 0) ITEMs throw, make DSTATE_MAP throw
+                                  #Else, ITEMs that throw produce ERROR_OUTPUTs
+DSTATE_MAP
+ .ToleratedFailurePercentage      #Same but as percentage
 
 DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
                                   #Wait for a specific duration
