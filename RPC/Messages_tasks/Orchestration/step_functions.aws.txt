@@ -134,7 +134,7 @@ MACHINE                           #Creation is idempotent (if same REQ)
                                   #Delete terminate ongoing EXECs and wait for them to fail
                                   #Delete also delete VERSIONs|ALIASs
 MACHINE.stateMachineArn           #In output: 'MACHINE_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:stateMachine:MACHINE'
-                                  #In input: 'QUALIFIED_MACHINE_ARN'
+                                  #In input: 'QUALIFIED_MACHINE_ARN' or 'STATE_MAP_ARN'
 MACHINE.name                      #'MACHINE'
                                   #Max 80 chars, [:alnum:]-_
 MACHINE.creationDate              #DATE_NUM
@@ -264,13 +264,13 @@ ALIAS_ROUTING.weight              #NUM. 0 to 100
                                   #Sum of all ALIAS_ROUTING.weight must be 100
 
 QUALIFIER                         #'VERSION_NUM|ALIAS'
-QUALIFIED_MACHINE_ARN             #'MACHINE_ARN[:QUALIFIER]' (def: latest VERSION) or 'STATE_MAP_ARN'
+QUALIFIED_MACHINE_ARN             #'MACHINE_ARN[:QUALIFIER]' (def: latest VERSION)
 
                                   ┌────────────────┐
                                   │   ALIAS AUTH   │
                                   └────────────────┘
 
-COND_KEY                          #'VERSION_NUM|ALIAS|STATE_MAP_LABEL'
+COND_KEY                          #'VERSION_NUM|ALIAS'
  states:StateMachineQualifier     #Only with DeleteStateMachineVersion(), *Alias*(), DescribeStateMachine(),
                                   #Start[Sync]Execution|ListExecutions()
 
@@ -294,7 +294,7 @@ MISSING FEATURES ==>              #DescribeStateMachineForExecution()
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
 
 EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXEC:EXPRESS_MID'
-MAP_RUN_EXEC_ARN                  #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXEC:EXPRESS_MID'
+ITEM_EXEC_ARN                     #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXEC:EXPRESS_MID'
 
                                   ┌────────────────┐
                                   │   DEFINITION   │
@@ -969,9 +969,30 @@ EVENT_INFO.length                 #NUM
 
 DIAG_ERROR TOO_DEEPLY_NESTED      #Must be hit child STATE max depth (which is it???)
 
-                                  ┌───────────────────┐
-                                  │   MAP ITERATION   │
-                                  └───────────────────┘
+                                  ┌───────────────┐
+                                  │   MAP LABEL   │
+                                  └───────────────┘
+
+DSTATE_MAP.Label                  #'STATE_MAP_LABEL' (def: random ID). STATE_MAP name
+                                  #Used by executor, as opposed to 'STATE' which is used inside DEFINITION
+                                  #Must be unique per MACHINE
+                                  #Max 40 chars, [:alnum:]-_
+
+STATE_MAP_ARN                     #'MACHINE_ARN/STATE_MAP_LABEL'. STATE_MAP's child MACHINE
+                                  #Can be used as MACHINE.stateMachineArn
+MACHINE.label                     #'STATE_MAP_LABEL', when using a STATE_MAP_ARN
+
+                                  ┌────────────────────┐
+                                  │   MAP LABEL LINT   │
+                                  └────────────────────┘
+
+DIAG_ERROR DUPLICATE_LABEL_NAME   #'STATE_MAP_LABEL' must be unique per MACHINE
+
+DIAG_ERROR INVALID_LABEL_NAME     #'STATE_MAP_LABEL' must be valid
+
+                                  ┌───────────────┐
+                                  │   MAP ITEMS   │
+                                  └───────────────┘
 
 ORDER ==>                        %#Arguments -> ItemReader -> Items -> ItemSelector -> ItemBatcher
                                  $#InputPath -> ItemReader -> ItemsPath -> ItemSelector -> ItemBatcher
@@ -1008,6 +1029,85 @@ EVENT_INFO.index                  #NUM
 EVENT_INFO.name                   #'STATE'
                                   #Max 80 chars, [:alnum:]-_
                                   #With EVENT_TYPEs MapIteration*, *StateEntered, *StateExited
+
+                                  ┌─────────────┐
+                                  │   MAP RUN   │
+                                  └─────────────┘
+
+UpdateMapRun()                    #Req: MAP_RUN
+                                  #  - no *Date, status, executionArn, redrive*, *Counts
+                                  #Res: empty
+ListMapRuns()                     #Req: MAP_RUN
+                                  #  - only executionArn
+                                  #Res: mapRuns MAP_RUN_ARR
+                                  #  - only mapRunArn, executionArn, startDate, stopDate
+                                  #  - only one with stateMachineArn
+DescribeMapRun()                  #Req: MAP_RUN
+                                  #  - only mapRunArn
+                                  #Res: MAP_RUN
+
+MAP_RUN                           #STATE_MAP in a given EXEC
+                                  #Not if DMAP_CONF.Mode 'INLINE'
+MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:mapRun:MACHINE/STATE_MAP_LABEL:MAP_RUN_MID'
+MAP_RUN.startDate                 #DATE_NUM
+MAP_RUN.stopDate                  #DATE_NUM
+
+MAP_RUN.stateMachineArn           #'MACHINE_ARN'
+MAP_RUN.executionArn              #'EXEC_ARN'
+
+MAP_RUN.status                    #STR
+
+EVENT_TYPE MapRunStarted
+EVENT_TYPE MapRunSucceeded
+EVENT_TYPE MapRunAborted
+EVENT_TYPE MapRunFailed           #On MAP_RUN start|end
+
+EVENT_TYPE MapRunRedriven         #Like EVENT_TYPE ExecutionRedriven, but when on a MAP_RUN
+                                  #I.e. when QUALIFIED_MACHINE_ARN was a STATE_MAP_ARN???
+
+EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
+                                  #With EVENT_TYPEs MapRunStarted and MapRunRedriven
+
+                                  ┌──────────────────┐
+                                  │   MAP RUN AUTH   │
+                                  └──────────────────┘
+
+EXEC_ARN                          #Used as Resource for ListMapRuns()
+
+MAP_RUN_ARN                       #Used as Resource for UpdateMapRun|DescribeMapRun()
+                                  #Also for ListExecutions() if EXEC.mapRunArn set
+
+                                  ┌────────────────────┐
+                                  │   MAP ITEMS EXEC   │
+                                  └────────────────────┘
+
+ITEM_EXEC                         #ITEM in a given MAP_RUN
+ITEM_EXEC_ARN                     #'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE/STATE_MAP_LABEL:EXEC'
+                                  #Can be used where EXEC_ARN is expected
+ITEM_EXEC.*                       #Like EXEC.*
+ITEM_EXEC.mapRunArn               #'MAP_RUN_ARN'
+
+MAP_RUN.executionCounts           #MAP_COUNT
+MAP_RUN.itemCounts                #MAP_COUNT
+MAP_COUNT.aborted                 #NUM
+MAP_COUNT.failed                  #NUM
+MAP_COUNT.failuresNotRedrivable   #NUM
+MAP_COUNT.pending                 #NUM
+MAP_COUNT.pendingRedrive          #NUM
+MAP_COUNT.resultsWritten          #NUM
+MAP_COUNT.running                 #NUM
+MAP_COUNT.succeeded               #NUM
+MAP_COUNT.timedOut                #NUM
+MAP_COUNT.total                   #NUM
+EXEC.itemCount                    #Same as MAP_RUN.itemCounts.total. Only if EXEC.mapRunArn set
+
+                                  ┌─────────────────────────┐
+                                  │   MAP ITEMS EXEC AUTH   │
+                                  └─────────────────────────┘
+
+ITEM_EXEC_ARN                     #Used as Resource for *Execution*() (EXEC, REDRIVE, EVENTs)
+                                  #  - instead of EXEC_ARN
+                                  #  - when STATE_MAP_ARN passed as QUALIFIED_MACHINE_ARN???
 
                                   ┌────────────────┐
                                   │   MAP CONFIG   │
@@ -1052,97 +1152,6 @@ DBATCH.MaxInputBytesPerBatch      #Max NUM[_DZEXPR] (in bytes, def|max 256KB) to
                                   #Combined with MaxItemsPerBatch (if any)
 
 DBATCH.BatchInput                 #DOEXPR (def: undefined), to set as INPUT.BatchInput
-
-                                  ┌─────────────┐
-                                  │   MAP RUN   │
-                                  └─────────────┘
-
-UpdateMapRun()                    #Req: MAP_RUN
-                                  #  - no *Date, status, executionArn, redrive*, *Counts
-                                  #Res: empty
-ListMapRuns()                     #Req: MAP_RUN
-                                  #  - only executionArn
-                                  #Res: mapRuns MAP_RUN_ARR
-                                  #  - only mapRunArn, executionArn, startDate, stopDate
-                                  #  - only one with stateMachineArn
-DescribeMapRun()                  #Req: MAP_RUN
-                                  #  - only mapRunArn
-                                  #Res: MAP_RUN
-
-DSTATE_MAP.Label                  #'STATE_MAP_LABEL' (def: random ID). STATE_MAP name
-                                  #Use by executor, as opposed to 'STATE' which is used inside DEFINITION
-                                  #Must be unique per MACHINE
-                                  #Max 40 chars, [:alnum:]-_
-
-STATE_MAP_ARN                     #'MACHINE_ARN/STATE_MAP_LABEL'. DMACHINE of a STATE_MAP
-                                  #Can be used as QUALIFIED_MACHINE_ARN
-MACHINE.label                     #'STATE_MAP_LABEL', when using a STATE_MAP_ARN
-
-MAP_RUN                           #Execution of a STATE_MAP
-MAP_RUN.mapRunArn                 #'MAP_RUN_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:mapRun:MACHINE/STATE_MAP_LABEL:MAP_RUN_MID'
-MAP_RUN.startDate                 #DATE_NUM
-MAP_RUN.stopDate                  #DATE_NUM
-
-MAP_RUN.stateMachineArn           #'MACHINE_ARN'
-
-EXEC                              #Can be MAP_RUN-specific
-EXEC.mapRunArn                    #'MAP_RUN_ARN'. Only set if EXEC is MAP_RUN-specific
-MAP_RUN.executionArn              #'MAP_RUN_EXEC_ARN'. 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE/STATE_MAP_LABEL:EXEC'
-                                  #Similar meaning as MAP_RUN_ARN
-                                  #Meant to replace EXEC_ARN to perform some actions on a MAP_RUN instead of a MACHINE:
-                                  #  - DescribeStateMachineForExecution()
-                                  #  - ListExecutions()
-                                  #  - RedriveExecution()
-                                  #  - EVENTs??? others???
-                                  #Replace with a concept of QUALIFIED_EXEC_ARN???
-
-MAP_RUN.status                    #STR
-
-EXEC.itemCount                    #Total NUM of ITEMs
-MAP_RUN.executionCounts           #MAP_COUNT
-MAP_RUN.itemCounts                #MAP_COUNT
-MAP_COUNT.aborted                 #NUM
-MAP_COUNT.failed                  #NUM
-MAP_COUNT.failuresNotRedrivable   #NUM
-MAP_COUNT.pending                 #NUM
-MAP_COUNT.pendingRedrive          #NUM
-MAP_COUNT.resultsWritten          #NUM
-MAP_COUNT.running                 #NUM
-MAP_COUNT.succeeded               #NUM
-MAP_COUNT.timedOut                #NUM
-MAP_COUNT.total                   #NUM
-
-EVENT_TYPE MapRunStarted
-EVENT_TYPE MapRunSucceeded
-EVENT_TYPE MapRunAborted
-EVENT_TYPE MapRunFailed           #On MAP_RUN start|end
-
-EVENT_TYPE MapRunRedriven         #Like EVENT_TYPE ExecutionRedriven, but when on a MAP_RUN
-                                  #I.e. when QUALIFIED_MACHINE_ARN was a STATE_MAP_ARN
-
-EVENT_INFO.mapRunArn              #'MAP_RUN_ARN'
-                                  #With EVENT_TYPEs MapRunStarted and MapRunRedriven
-
-                                  ┌──────────────────┐
-                                  │   MAP RUN AUTH   │
-                                  └──────────────────┘
-
-EXEC_ARN                          #Used as Resource for ListMapRuns()
-
-MAP_RUN_ARN                       #Used as Resource for UpdateMapRun|DescribeMapRun()
-                                  #Also for ListExecutions() if EXEC.mapRunArn set
-
-MAP_RUN_EXEC_ARN                  #Used as Resource for *Execution*() (EXEC, REDRIVE, EVENTs)
-                                  #  - instead of EXEC_ARN
-                                  #  - when STATE_MAP_ARN passed as QUALIFIED_MACHINE_ARN
-
-                                  ┌──────────────────┐
-                                  │   MAP RUN LINT   │
-                                  └──────────────────┘
-
-DIAG_ERROR DUPLICATE_LABEL_NAME   #'STATE_MAP_LABEL' must be unique per MACHINE
-
-DIAG_ERROR INVALID_LABEL_NAME     #'STATE_MAP_LABEL' must be valid
 
                                   ┌─────────────────┐
                                   │   MAP S3 READ   │
