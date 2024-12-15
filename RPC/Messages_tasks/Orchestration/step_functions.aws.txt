@@ -1170,10 +1170,12 @@ JsonPath.executionInput          $#'$$.Execution.Input'
 
 OUTPUT                            #VAL (def: INPUT) returned by each STATE
                                   #OUTPUT from final STATE is EXEC's output
-                                  #JSON types only
+                                  #JSON values only
                                   #Max 256KB (else throw 'States.DataLimitExceeded')
 
-TRANSFORM OUTPUT ==>              #By default, OUTPUT is kept as is
+TRANSFORM OUTPUT ==>              #By default, OUTPUT is not transformed, i.e. kept as is
+
+TEST_DATA.result                  #'OUTPUT_JSON' before DSTATE.Output|ResultSelector
 
 $states.result                   %#OUTPUT
                                  %#Before DSTATE.Output transformed it
@@ -1198,8 +1200,6 @@ DSTATE.OutputPath                $#DSEXPR. Transforms OUTPUT
                                  $#Not with STATE_FAIL
 TEST_DATA.afterResultSelector
  |afterResultPath                $#'OUTPUT_JSON' after DSTATE.ResultSelector|ResultPath
-
-TEST_DATA.result                  #'OUTPUT_JSON' before DSTATE.Output|ResultSelector
 
 EXEC.output                       #Final 'OUTPUT_JSON'. Not if ERROR_OUTPUT
 TEST_OUT|ASYNC_TASK_SUCCESS.output#State 'OUTPUT_JSON'. Not if ERROR_OUTPUT
@@ -1227,7 +1227,6 @@ CSTATE_OPTS.outputPath           $#DSTATE.OutputPath
                                   └─────────────┘
 
 CONTEXT                           #'OBJ_JSON' passed to each STATE
-                                  #Set by caller, for a given EXEC
 
 $states.context                  %#CONTEXT
 $$...                            $#Like $... but root value is CONTEXT instead
@@ -1283,7 +1282,7 @@ CDK ==>                           #Does not support DVARs yet
                                   └───────────┘
 
 DMACHINE.States.STATE             #DSTATE. Also called "step". Like `case` in a `switch` statement
-                                  #Parent|child|siblings MACHINEs cannot reuse same 'STATE' name
+                                  #Parent|child|siblings MACHINEs cannot reuse same 'STATE' names
                                   #'STATE' name max 80 chars
                                   #Required
 
@@ -1293,7 +1292,7 @@ TEST_IN.definition                #'DSTATE_JSON'
 CONTEXT.State.Name                #'STATE'
 
 DSTATE.Type                       #'STATE_TYPE'. Required
-DSTATE_*.*                        #STATE_TYPE-specific, e.g. DSTATE_CHOICE.Default
+DSTATE_*.*                        #STATE_TYPE-specific properties, e.g. DSTATE_CHOICE.Default
 
 DSTATE.Comment                    #STR. Description
 
@@ -1381,7 +1380,7 @@ new Succeed
 JsonPath.stateEnteredTime        $#'$$.State.EnteredTime'
 
 CTREE                             #Tree of CSTATEs
-                                  #Starts with 1 CSTATE and end with 1|n CTREEs
+                                  #Starts with 1 CSTATE and ends with 1|n CTREEs
                                   #For a single DMACHINE, i.e. does not include parent|child DMACHINEs of STATE_MAP|PARALLELs
 CTREE.next(CTREE2)->CCHAIN        #Make CTREE's end go to CTREE2's start, using DSTATE.Next
                                   #If CTREE has several ends, all go to CTREE2's start, i.e. converge
@@ -1471,8 +1470,8 @@ DSTATE_CHOICE.Default             #'STATE'
 
 DSTATE_CHOICE.Choices             #DCHOICE_ARR
                                   #Cannot be empty
-DCHOICE.Comment                   #STR. Description
 DCHOICE.Next                      #Like DSTATE.Next. Required
+DCHOICE.Comment                   #STR. Description
 
 DCHOICE.Assign                    #Like DSTATE_CHOICE.Assign
                                   #DSTATE_CHOICE.Assign is not used if any DCHOICE matches (even if it has no DCHOICE.Assign)
@@ -1493,7 +1492,9 @@ CSTATE_CHOICE.when
 OPTS.comment                      #DCHOICE.Comment
 
 CSTATE_CHOICE.afterwards([OPTS])  #CCHAIN's start is CSTATE_CHOICE, ends are each DCHOICE + DSTATE_CHOICE.Default
- ->CCHAIN                         #Meant to make every possible choice continue with the same next STATE
+ ->CCHAIN                         #Meant to call .next():
+                                  #  - on every possible choice: all converge to same next STATE
+                                  #  - as opposed to individual ones: each having different next STATEs
                                   #I.e. like a `finally` statement
                                   #Can do it using either:
                                   #  - CSTATE_CHOICE.afterwards().next(...)
@@ -1574,11 +1575,9 @@ Condition.stringMatches
 ERROR                             #STATEs can throw ERRORs
                                   #In addition to ERRORs documented in this doc, any STATE might fail due to network ERRORs
                                   #ERRORs are propagated to parent STATE|MACHINEs
-                                  #When ERROR reaches top-level MACHINE, ends it with failure, using ERROR as OUTPUT
+                                  #When ERROR reaches top-level MACHINE, makes EXEC fail with ERROR_OUTPUT
 
-ERROR_OUTPUT                      #On error, used as OUTPUT
 ERROR_OUTPUT.Error                #'ERROR_CODE'. Can be undefined
-                                  #'States.*' reserved, i.e. should not use inside STATE_TASK
                                   #Max 256 chars
 ERROR_OUTPUT.Cause                #'MESSAGE'. Can be undefined
                                   #Max 32KB
@@ -1586,7 +1585,7 @@ ERROR_OUTPUT.Cause                #'MESSAGE'. Can be undefined
 EXEC|TEST_OUT|ASYNC_TASK_FAILURE
  .error|cause                     #ERROR_OUTPUT.*
 
-ABORTING ==>                      #Stops ongoing STATEs. Happens with:
+ABORTING ==>                      #Stops ongoing STATEs. Happens if:
                                   #  - StopExecution()
                                   #  - sibling STATE_PARALLEL branch fails
                                   #  - STATE_MAP ITEM fails (see DSTATE_MAP.ToleratedFailure* below)
@@ -1609,9 +1608,10 @@ Errors.ERROR_CODE                 #'States.ERROR_CODE'
                                   └──────────┘
 
 DSTATE.Type                       #'Fail'. STATE is STATE_FAIL
-                                  #End MACHINE with failure, including parent ones
-                                  #OUTPUT is ERROR_OUTPUT
+                                  #End MACHINE with failure (ERROR_OUTPUT), including parent ones
+
 DSTATE_FAIL.Error                 #'ERROR_CODE'[_DFEXPR] (def: none). ERROR_OUTPUT.Error
+                                  #Should not use 'States.*' (reserved) except to propagate it
 DSTATE_FAIL.Cause                 #'MESSAGE'[_DFEXPR] (def: none). ERROR_OUTPUT.Cause
 
                                   ┌──────────────┐
@@ -1688,8 +1688,8 @@ CSTATE_TASK_OPTS.taskTimeout      #DSTATE_TASK.TimeoutSeconds
 
 DSTATE.Catch                      #DCATCH_ARR. On error, execute some logic
                                   #Only with STATE_TASK|MAP|PARALLEL
-DCATCH.Comment                    #STR. Description
 DCATCH.Next                       #Like DSTATE.Next. Required
+DCATCH.Comment                    #STR. Description
 
 DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
 'States.ALL'                      #Special ERROR_CODE, matching any ERROR_CODE
@@ -1697,8 +1697,7 @@ DCATCH.ErrorEquals                #'ERROR_CODE'_ARR. Required, not empty
                                   #Only in DCATCH|DRETRY.ErrorEquals
                                   #Must be in last DCATCH|DRETRY of its ARR
 
-DCATCH's INPUT ==>                #In first matching DCATCH: STATE's INPUT
-                                  #In next ones: previous matching DCATCH's ERROR_OUTPUT
+DCATCH's INPUT ==>                #Always STATE's INPUT, as opposed to previous DCATCH's ERROR_OUTPUT
 
 DCATCH.Output                    %#ERROR_OUTPUT_DOEXPR (def: keep as is). Transforms ERROR_OUTPUT
 $states.errorOutput              %#ERROR_OUTPUT
@@ -1786,7 +1785,7 @@ EXEC|MAP_RUN.redriveDate          #DATE_NUM of last REDRIVE. null if none
 EXEC.redriveStatus                #One of:
                                   #  - 'REDRIVABLE': can do a REDRIVE on [ITEM_]EXEC
                                   #  - 'REDRIVABLE_BY_MAP_RUN': can do a REDRIVE on ITEM_EXECs, not EXEC
-                                  #  - 'NOT_REDRIVABLE': cannot do a REDRIVE on [ITEM_]EXEC, e.g. due to:
+                                  #  - 'NOT_REDRIVABLE': cannot do a REDRIVE on [ITEM_]EXEC, e.g. due to either:
                                   #     - did not fail
                                   #     - hit max limits
 EXEC.redriveStatusReason          #'MESSAGE' if redriveStatus 'NOT_REDRIVABLE'
@@ -1933,7 +1932,7 @@ CFRAGMENT.toSingleState
                                   └──────────────┘
 
 DSTATE.Type                       #'Map'. STATE is STATE_MAP
-                                  #Executes one child MACHINEs per ITEM_ARR, in parallel
+                                  #Executes one child MACHINEs per ITEM (of an ARR), in parallel
                                   #OUTPUT is ARR of their OUTPUTs
 
 EVENT_TYPE MapStateStarted        #On STATE_MAP's ITERs start
@@ -1946,10 +1945,10 @@ EVENT_TYPE MapStateFailed         #On STATE_MAP failure
                                   └───────────────────┘
 
 PACTION states:StartExecution     #Must be allowed for MACHINE.roleArn, on itself, i.e. Resource MACHINE_ARN
-                                  #Not if DMAP_CONF.Mode 'INLINE'
+                                  #Not needed if DMAP_CONF.Mode 'INLINE'
 PACTION states:DescribeExecution  #Must be allowed for MACHINE.roleArn, on any EXEC on itself,
  |StopExecution                   #i.e. Resource 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE:*'
-                                  #Not if DMAP_CONF.Mode 'INLINE'
+                                  #Not needed if DMAP_CONF.Mode 'INLINE'
 
                                   ┌──────────────────┐
                                   │   MAP MAIN IAC   │
@@ -1962,20 +1961,19 @@ new [Distributed]Map              #CSTATE_MAP
                                   │   MAP MAIN LINT   │
                                   └───────────────────┘
 
-DIAG_ERROR TOO_DEEPLY_NESTED      #Must not hit child STATE max depth (which is it???)
+DIAG_ERROR TOO_DEEPLY_NESTED      #Must not hit child STATE max depth
+                                  #The limit is undocumented
 
                                   ┌───────────────┐
                                   │   MAP LABEL   │
                                   └───────────────┘
 
 DSTATE_MAP.Label                  #'STATE_MAP_LABEL' (def: random ID). STATE_MAP name
-                                  #Used by executor, as opposed to 'STATE' which is used inside DEFINITION
+                                  #Used by MACHINE|EXEC, as opposed to 'STATE' which is used inside DEFINITION
                                   #Must be unique per MACHINE
                                   #Max 40 chars, [:alnum:]-_
 
 STATE_MAP_ARN                     #'MACHINE_ARN/STATE_MAP_LABEL'. STATE_MAP's child MACHINE
-                                  #Can be used as MACHINE.stateMachineArn
-
 MACHINE.stateMachineArn           #In input (read, not write), can be a 'STATE_MAP_ARN' to target child MACHINE
 MACHINE.label                     #'STATE_MAP_LABEL', when using a STATE_MAP_ARN
 
@@ -2001,7 +1999,7 @@ DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
                                   #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
 DMAP_CONF.Mode                    #Either 'INLINE' (def) or 'DISTRIBUTED'
 
-INLINE EXCLUSIVE FEATURES ==>     #Initial STATE for each ITER is free
+INLINE EXCLUSIVE FEATURES ==>     #Initial STATE_EXEC of each ITEM is free (unless Express)
                                   #Can reference upper scope's DVARs (see above)
                                   #Does not require additional PACTIONs states:*Execution (see above)
 
@@ -2306,7 +2304,7 @@ DWRITER_PARAMS.Bucket             #'BUCKET'
                                   #Must be in same ACCOUNT|REGION as MACHINE
 DWRITER_PARAMS.Prefix             #'PREFIX'. OBJECT prefix
 
-DWRITER_OUTPUT                    #No size limit initial total OUTPUT (can be > 256KB)
+DWRITER_OUTPUT                    #No size limit on initial total OUTPUT (can be > 256KB)
 DWRITER_OUTPUT.MapRunArn          #'MAP_RUN_ARN'
 DWRITER_OUTPUT.ResultWriterDetails#DWRITER_PARAMS_OUTPUT
 DWRITER_PARAMS_OUTPUT.Bucket      #'BUCKET'
@@ -2344,7 +2342,7 @@ OPTS.prefix                       #DWRITER_PARAMS.Prefix
 
 DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
                                   #Wait for a specific duration
-                                  #For more complex wait logic, see, ACTIVITY_TASK, JOB_TASK and ASYNC_TASK
+                                  #For more complex wait logic, see ACTIVITY_TASK, JOB_TASK and ASYNC_TASK
 
 DSTATE_WAIT.Timestamp             #'DATE'[_DZEXPR]
                                   #If in the past, no wait
@@ -2448,10 +2446,10 @@ CTASK_METRICS.metricPrefixPlural  #Same but SUFFIX is Scheduled, Started, Succee
                                   │   TASK MAIN LINT   │
                                   └────────────────────┘
 
-asl-validator --no-arn-check      #BOOL (def: false). !VALIDATOR_OPTS.checkArn
-VALIDATOR_OPTS.checkArn           #BOOL. If true (def), validates that DTASK_RESOURCE is a valid ARN
-
 DIAG_ERROR INVALID_RESOURCE       #DSTATE_TASK.Resource must be valid
+
+asl-validator --no-arn-check      #BOOL (def: false). !VALIDATOR_OPTS.checkArn
+VALIDATOR_OPTS.checkArn           #BOOL. If true (def), validates that DTASK_RESOURCE is an ARN
 
                                   ┌───────────────┐
                                   │   TASK HTTP   │
@@ -2484,6 +2482,13 @@ INPUT.Transform                   #When RequestBodyEncoding 'URL_ENCODED', how t
                                   #  - 'REPEAT': ARR=VAL&ARR=VAL2&...
                                   #  - 'COMMAS': ARR=VAL,VAL2,...
 
+TEST_DATA.request                 #TEST_REQ
+TEST_REQ.url                      #'URL'
+TEST_REQ.protocol                 #'http[s]'
+TEST_REQ.method                   #'HTTP_METHOD'
+TEST_REQ.headers                  #'HEADERS_OBJ'
+TEST_REQ.body                     #'VAL'
+
 INPUT.Authentication.ConnectionArn#EventBridge CONNECTION_ARN. Required
                                   #I.e. should not need to put credentials inside INPUT.*
                                   #  - note: EventBridge CONNECTION uses Secrets Manager under-the-hood
@@ -2493,6 +2498,9 @@ INPUT.Authentication.ConnectionArn#EventBridge CONNECTION_ARN. Required
                                   #  - throws 'States.RuntimeError' if request body and both are STRs
 INPUT.InvocationConfig
  .ConnectionArn                   #Same but for CONNECTIONs to VPCs (i.e. "private")
+
+TEST_IN.revealSecrets             #BOOL. If false (def), HTTP_TASK omits credentials in TEST_DATA.request|response
+                                  #I.e. only if TEST_IN.inspectionLevel 'TRACE'
 
 OUTPUT.*                          #Undocumented, so the following is a guess
 OUTPUT.StatusCode                 #STATUS_NUM
@@ -2505,22 +2513,12 @@ OUTPUT.ResponseBody               #STR
 ERROR_OUTPUT.error                #'States.Http.StatusCode.4**|5**'
                                   #I.e. fails TASK if 4**|5**
 
-TEST_DATA.request                 #TEST_REQ
-TEST_REQ.url                      #'URL'
-TEST_REQ.protocol                 #'http[s]'
-TEST_REQ.method                   #'HTTP_METHOD'
-TEST_REQ.headers                  #'HEADERS_OBJ'
-TEST_REQ.body                     #'VAL'
-
 TEST_DATA.response                #TEST_RES
 TEST_RES.protocol                 #'http[s]'
 TEST_RES.statusCode               #'STATUS_NUM'
 TEST_RES.statusMessage            #'STATUS'
 TEST_RES.headers                  #'HEADERS_OBJ'
 TEST_RES.body                     #'VAL'
-
-TEST_IN.revealSecrets             #BOOL. If false (def), HTTP_TASK omits credentials in TEST_DATA.request|response
-                                  #I.e. only if TEST_IN.inspectionLevel 'TRACE'
 
                                   ┌──────────────────┐
                                   │   TASK HTTP UI   │
@@ -2643,7 +2641,7 @@ OPTS.*                            #Same as CallAwsService()
 
 OPTS.region|endpoint              #COPTS.*
 
-OPTS.retryOnServiceExceptions     #Same as LambdaInvoke()
+OPTS.retryOnServiceExceptions     #Same as LambdaInvoke() (see Lambda doc)
 
                                   ┌────────────────────────────┐
                                   │   TASK SERVICE OPTIMIZED   │
@@ -2652,8 +2650,9 @@ OPTS.retryOnServiceExceptions     #Same as LambdaInvoke()
 DSTATE_TASK.Resource              #'arn:aws:states:::SERVICE_TASK_ACTION[.SERVICE_TASK_PATTERN]'
                                   #"Optimized integration". OPTIMIZED_SERVICE_TASK
                                   #Like GENERIC_SERVICE_TASK but optimized for a specific SERVICE + ACTION
-                                  #E.g. automatically encode PARAMs or decode RES
-                                  #Only specific ones, documented in their respective docs (including Lambda)
+                                  #E.g. automatically JSON serializes specific PARAM.* or parses RES.*
+                                  #Only specific ones, documented in their respective docs
+                                  #  - including Lambda, the most commonly used one
 
 SERVICE_TASK_ACTION               #Available ones depend on SERVICE, but usually similar to 'SERVICE:ACTION'
 
@@ -2749,14 +2748,15 @@ CXMONITORING_OPTS
                                   │   TASK SERVICE NESTED   │
                                   └─────────────────────────┘
 
-states:startExecution             #OPTIMIZED_SERVICE_TASK that calls StartExecution()
-                                  #OPTIMIZED_NESTED_EXEC. Nested EXEC, but as a top-level EXEC
+states:startExecution             #OPTIMIZED_NESTED_EXEC. OPTIMIZED_SERVICE_TASK that calls StartExecution()
+                                  #Nested EXEC
                                   #Difference from child MACHINEs (and their ITEM_EXECs):
                                   #  - MACHINEs and EXECs are completely separate
                                   #  - meant for re-using sub-MACHINEs as components
                                   #Can be:
                                   #  - ASYNC_TASK
-                                  #  - JOB_TASK: using StartSyncExecution()
+                                  #  - JOB_TASK:
+                                  #     - polls with DescribeExecution, aborts with StopExecution()
                                   #     - SERVICE_TASK_PATTERN is either '.sync' or '.sync:2'
 
 INPUT.*                           #EXEC.* (PascalCase'd) except no includedData|traceHeader
@@ -2774,8 +2774,7 @@ OUTPUT.*                          #EXEC.* (PascalCase'd)
                                   │   TASK SERVICE NESTED AUTH   │
                                   └──────────────────────────────┘
 
-PACTION
- states:Start[Sync]Execution      #Must be allowed for MACHINE.roleArn on MACHINE2
+PACTION states:StartExecution     #Must be allowed for MACHINE.roleArn on MACHINE2
 
 PACTION states:DescribeExecution  #If JOB_TASK, must be allowed for MACHINE.roleArn on any EXEC of MACHINE2
  |StopExecution                   #I.e. on 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE2:*'
