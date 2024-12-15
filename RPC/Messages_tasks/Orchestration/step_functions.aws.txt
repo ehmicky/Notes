@@ -6,7 +6,7 @@
 VERSION ==>                       #2024-11-28
 
 TODO:
-  - move the SQS, SNS, etc. docs to their doc, under "... step functions" chapter
+  - re-read all
   - add summary
   - change description in new_services
   - compare with SWF
@@ -2006,6 +2006,33 @@ DIAG_ERROR DUPLICATE_LABEL_NAME   #'STATE_MAP_LABEL' must be unique per MACHINE
 
 DIAG_ERROR INVALID_LABEL_NAME     #'STATE_MAP_LABEL' must be valid
 
+                                  ┌──────────────┐
+                                  │   MAP MODE   │
+                                  └──────────────┘
+
+DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
+                                  #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
+DMAP_CONF.Mode                    #Either 'INLINE' (def) or 'DISTRIBUTED'
+
+INLINE EXCLUSIVE FEATURES ==>     #Initial STATE for each ITER is free
+                                  #Can reference upper scope's DVARs (see above)
+                                  #Does not require additional PACTIONs states:*Execution (see above)
+
+INLINE MISSING FEATURES ==>       #Max 40 ITEMs
+                                  #BATCH
+                                  #DREADER|DWRITER
+                                  #MAP_RUN and ITEM_EXEC
+                                  #  - i.e. its EVENTs are included in the max 2.5e4 quota of parent EXEC
+                                  #DMAP_CONF.ExecutionType
+                                  #DMAP_CONF.ToleratedFailure*
+                                  #STATE_MAP_LABEL|STATE_MAP_ARN
+
+                                  ┌──────────────────┐
+                                  │   MAP MODE IAC   │
+                                  └──────────────────┘
+
+new [Distributed]Map(...)         #DMAP_CONF.Mode is 'INLINE|DISTRIBUTED' depending on whether 'Distributed'
+
                                   ┌───────────────┐
                                   │   MAP ITEMS   │
                                   └───────────────┘
@@ -2045,6 +2072,53 @@ CSTATE_MAP.itemProcessor(CTREE)
 
 CSTATE_MAP_OPTS.itemsPath        $#DSTATE_MAP.ItemsPath
 CSTATE_MAP_OPTS.itemSelector      #DSTATE_MAP.ItemSelector
+
+                                  ┌────────────────┐
+                                  │   MAP CONFIG   │
+                                  └────────────────┘
+
+MAP_RUN|DSTATE_MAP.MaxConcurrency #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
+                                  #Can be 1 for serial
+
+MAP_RUN|DSTATE_MAP                #When > NUM[_DZEXPR] (def: 0) ITEMs throw:
+ .ToleratedFailureCount           #  - abort every ITEM (i.e. its child MACHINE)
+                                  #  - make DSTATE_MAP throw 'States.ExceedToleratedFailureThreshold'
+                                  #Else, ITEMs that throw:
+                                  #  - do not make parent MACHINE throw
+                                  #  - produce ERROR_OUTPUTs
+MAP_RUN|DSTATE_MAP
+ .ToleratedFailurePercentage      #Same but as NUM[_DZEXPR] 0-100 percentage (def: 0)
+
+                                  ┌────────────────────┐
+                                  │   MAP CONFIG IAC   │
+                                  └────────────────────┘
+
+CSTATE_MAP_OPTS.maxConcurrency
+ |toleratedFailurePercentage
+ |toleratedFailureCount           #DSTATE_MAP.*
+
+                                  ┌───────────────┐
+                                  │   MAP BATCH   │
+                                  └───────────────┘
+
+DSTATE_MAP.ItemBatcher            #DBATCH. Pass BATCHs to each MACHINE, i.e. groups of multiple ITEMs
+                                  #INPUT becomes {Items ITEM_ARR, BatchInput VAL}
+                                  #OUTPUT is ARR of each MACHINE's OUTPUT, i.e. one output element per BATCH
+                                  #Def: no BATCHs
+                                  #Goal: reduce cost (price, Lambda startup, etc.) associated with high NUM of ITEMs
+
+DBATCH.MaxItemsPerBatch           #Max NUM[_DZEXPR] of ITEMs per BATCH
+DBATCH.MaxInputBytesPerBatch      #Max NUM[_DZEXPR] (in bytes, def|max 256KB) total size per BATCH
+                                  #Must be explicitly set if no MaxItemsPerBatch
+                                  #Combined with MaxItemsPerBatch (if any)
+
+DBATCH.BatchInput                 #DOEXPR (def: undefined), to set as INPUT.BatchInput
+
+                                  ┌───────────────────┐
+                                  │   MAP BATCH IAC   │
+                                  └───────────────────┘
+
+CSTATE_MAP_OPTS.itemBatcher       #Value must be: new ItemBatch(OPTS), using OPTS.max*PerBatch|batchInput
 
                                   ┌─────────────┐
                                   │   MAP RUN   │
@@ -2132,80 +2206,6 @@ ListExecutions()
 DescribeExecution()
 StopExecution()
 GetExecutionHistory()             #Can operate on ITEM_EXECs by specifying an ITEM_EXEC_ARN
-
-                                  ┌──────────────┐
-                                  │   MAP MODE   │
-                                  └──────────────┘
-
-DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
-                                  #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
-DMAP_CONF.Mode                    #Either 'INLINE' (def) or 'DISTRIBUTED'
-
-INLINE EXCLUSIVE FEATURES ==>     #Initial STATE for each ITER is free
-                                  #Can reference upper scope's DVARs (see above)
-                                  #Does not require additional PACTIONs states:*Execution (see above)
-
-INLINE MISSING FEATURES ==>       #Max 40 ITEMs
-                                  #BATCH
-                                  #DREADER|DWRITER
-                                  #MAP_RUN and ITEM_EXEC
-                                  #  - i.e. its EVENTs are included in the max 2.5e4 quota of parent EXEC
-                                  #DMAP_CONF.ExecutionType
-                                  #DMAP_CONF.ToleratedFailure*
-                                  #STATE_MAP_LABEL|STATE_MAP_ARN
-
-                                  ┌──────────────────┐
-                                  │   MAP MODE IAC   │
-                                  └──────────────────┘
-
-new [Distributed]Map(...)         #DMAP_CONF.Mode is 'INLINE|DISTRIBUTED' depending on whether 'Distributed'
-
-                                  ┌────────────────┐
-                                  │   MAP CONFIG   │
-                                  └────────────────┘
-
-MAP_RUN|DSTATE_MAP.MaxConcurrency #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
-                                  #Can be 1 for serial
-
-MAP_RUN|DSTATE_MAP                #When > NUM[_DZEXPR] (def: 0) ITEMs throw:
- .ToleratedFailureCount           #  - abort every ITEM (i.e. its child MACHINE)
-                                  #  - make DSTATE_MAP throw 'States.ExceedToleratedFailureThreshold'
-                                  #Else, ITEMs that throw:
-                                  #  - do not make parent MACHINE throw
-                                  #  - produce ERROR_OUTPUTs
-MAP_RUN|DSTATE_MAP
- .ToleratedFailurePercentage      #Same but as NUM[_DZEXPR] 0-100 percentage (def: 0)
-
-                                  ┌────────────────────┐
-                                  │   MAP CONFIG IAC   │
-                                  └────────────────────┘
-
-CSTATE_MAP_OPTS.maxConcurrency
- |toleratedFailurePercentage
- |toleratedFailureCount           #DSTATE_MAP.*
-
-                                  ┌───────────────┐
-                                  │   MAP BATCH   │
-                                  └───────────────┘
-
-DSTATE_MAP.ItemBatcher            #DBATCH. Pass BATCHs to each MACHINE, i.e. groups of multiple ITEMs
-                                  #INPUT becomes {Items ITEM_ARR, BatchInput VAL}
-                                  #OUTPUT is ARR of each MACHINE's OUTPUT, i.e. one output element per BATCH
-                                  #Def: no BATCHs
-                                  #Goal: reduce cost (price, Lambda startup, etc.) associated with high NUM of ITEMs
-
-DBATCH.MaxItemsPerBatch           #Max NUM[_DZEXPR] of ITEMs per BATCH
-DBATCH.MaxInputBytesPerBatch      #Max NUM[_DZEXPR] (in bytes, def|max 256KB) total size per BATCH
-                                  #Must be explicitly set if no MaxItemsPerBatch
-                                  #Combined with MaxItemsPerBatch (if any)
-
-DBATCH.BatchInput                 #DOEXPR (def: undefined), to set as INPUT.BatchInput
-
-                                  ┌───────────────────┐
-                                  │   MAP BATCH IAC   │
-                                  └───────────────────┘
-
-CSTATE_MAP_OPTS.itemBatcher       #Value must be: new ItemBatch(OPTS), using OPTS.max*PerBatch|batchInput
 
                                   ┌─────────────────┐
                                   │   MAP S3 READ   │
@@ -2666,7 +2666,7 @@ DSTATE_TASK.Resource              #'arn:aws:states:::SERVICE_TASK_ACTION[.SERVIC
                                   #"Optimized integration". OPTIMIZED_SERVICE_TASK
                                   #Like GENERIC_SERVICE_TASK but optimized for a specific SERVICE + ACTION
                                   #E.g. automatically encode PARAMs or decode RES
-                                  #Only specific ones, documented in their respective docs
+                                  #Only specific ones, documented in their respective docs (including Lambda)
 
 SERVICE_TASK_ACTION               #Available ones depend on SERVICE, but usually similar to 'SERVICE:ACTION'
 
@@ -2757,171 +2757,6 @@ CFACADE.monitorStepFunction       #For AWS/States/ServiceIntegration*
  (CXMONITORING_OPTS)              #See cdk-monitoring-constructs doc
 CXMONITORING_OPTS
  .serviceIntegrationResourceArn   #DSTATE_TASK.Resource
-
-                                  ┌─────────────────┐
-                                  │   TASK LAMBDA   │
-                                  └─────────────────┘
-
-DSTATE_TASK.Resource              #'FUNC_ARN'. LAMBDA_TASK, i.e. OPTIMIZED_SERVICE_TASK calling Invoke()
-                                  #Cannot be aborted since Lambda does not allow aborting an invocation
-                                  #Cannot be ASYNC_TASK nor JOB_TASK
-INPUT                             #INVOCATION_REQ.Payload, as OBJ_ARR
-OUTPUT                            #INVOCATION_RES.ResponseBody, as OBJ_ARR
-
-SERVICE_TASK_ACTION lambda:invoke #Same but with different INPUT|OUTPUT, to set any INVOCATION_REQ|INVOCATION_RES.*
-                                  #Also, can be ASYNC_TASK (but not JOB_TASK)
-                                  #Cannot use INVOCATION_RES.LogResult nor InvokeWithResponseStream()
-
-INPUT.FunctionName                #'FUNC_ARN' of INVOCATION_REQ.FunctionArn
-INPUT.Qualifier                   #'QUALIFIER' of INVOCATION_REQ.FunctionArn
-INPUT.InvocationType              #INVOCATION_REQ.InvocationType (def: 'RequestResponse')
-INPUT.Payload                     #INVOCATION_REQ.Payload, as OBJ|ARR
-INPUT.ClientContext               #INVOCATION_REQ.ClientContext, as OBJ|ARR
-
-OUTPUT.Payload                    #INVOCATION_RES.ResponseBody, as OBJ|ARR
-OUTPUT.StatusCode|ExecutedVersion #INVOCATION_RES.*
-OUTPUT
- .SdkResponseMetadata.RequestId   #'REQ_ID'
-OUTPUT.SdkHttpMetadata.HttpHeaders#HEADERS_OBJ
-
-ERROR_OUTPUT                      #On invocation|FUNCTION error
-                                  #Common 'ERROR_CODE' recommended to retry on 500:
-                                  #  - Lambda.ServiceException: internal server error
-                                  #  - Lambda.AWSLambdaException: any API error
-                                  #  - Lambda.SdkClientException: any SDK error (including network error)
-                                  #  - Lambda.ClientExecutionTimeoutException: timeout
-                                  #Recommends retrying up to 6 times, with 2 seconds initial delay
-
-EVENT_TYPE LambdaFunctionScheduled
-EVENT_TYPE
- LambdaFunctionScheduleFailed
-EVENT_TYPE LambdaFunctionStarted
-EVENT_TYPE
- LambdaFunctionStartFailed
-EVENT_TYPE LambdaFunctionSucceeded
-EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task* but only for LAMBDA_TASK
-EVENT_TYPE LambdaFunctionTimedOut #Like EVENT_TYPE TaskTimedOut, but only for LAMBDA_TASK
-                                  #Not related to Lambda FUNC_VERSION.Timeout
-
-EVENT_INFO.resource               #'FUNC_ARN'
-                                  #With EVENT_TYPE LambdaFunctionScheduled
-EVENT_INFO
- .input|output|error|cause        #See API Gateway doc
-EVENT_INFO.taskCredentials.roleArn#'ROLE_ARN'
-                                  #With EVENT_TYPE LambdaFunctionScheduled
-EVENT_INFO.timeoutInSeconds       #DSTATE_TASK.TimeoutSeconds
-                                  #With EVENT_TYPE LambdaFunctionScheduled
-
-                                  ┌──────────────────────┐
-                                  │   TASK LAMBDA AUTH   │
-                                  └──────────────────────┘
-
-PACTION lambda:InvokeFunction     #Must be allowed for MACHINE.roleArn
-
-                                  ┌─────────────────────┐
-                                  │   TASK LAMBDA IAC   │
-                                  └─────────────────────┘
-
-new LambdaInvoke(...CARGS, OPTS)  #CSTATE_TASK that is a LAMBDA_TASK
- ->CLAMBDA_TASK                   #Automatically allows PACTIONs as described above
-
-OPTS.*                            #CSTATE_TASK_OPTS.*
-
-OPTS.payloadResponseOnly          #BOOL (def: false). Use DSTATE_TASK.Resource 'FUNC_ARN' instead of SERVICE_TASK_ACTION lambda:invoke
-OPTS.lambdaFunction               #IFUNC. INPUT.FunctionName
-OPTS.qualifier|invocationType
- |clientContext                   #INPUT.*
-OPTS.payload                      #CTASK_INPUT. INPUT.Payload (def: '$')
-
-OPTS.retryOnServiceExceptions     #BOOL (def: true). Adds a DRETRY, as described above
-
-                                  ┌──────────────────────────┐
-                                  │   TASK LAMBDA EVAL IAC   │
-                                  └──────────────────────────┘
-
-new EvaluateExpression            #CSTATE_TASK that is a LAMBDA_TASK that calls eval('JS_CODE') in a singleton FUNCTION
- (...CARGS, OPTS)->CEVAL_TASK     #I.e. allows performing simple JavaScript logic
-                                  #  - when JSONPath|JSONata is not expressive enough
-                                  #  - without manually creating a FUNCTION
-                                  #Automatically allows lambda:InvokeFunction on the FUNCTION
-
-OPTS.*                            #CSTATE_TASK_OPTS.*
-
-OPTS.expression                   #'JS_CODE'
-                                  #Can contain DFEXPR, which are substituted with their value first
-
-OPTS.runtime                      #'nodejsX.x' (def: latest)
-
-                                  ┌─────────────────────┐
-                                  │   TASK LAMBDA SAM   │
-                                  └─────────────────────┘
-
-AWS::Serverless::Connector        #Can be used with:
-                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
-                                  #  - Destination: Lambda FUNCTION (RESOURCE_REF.Arn)
-                                  #  - Permissions 'Write'
-                                  #Transformed to a MPOLICY on 'ROLE':
-                                  #  - allowing lambda:InvokeFunction
-                                  #  - on FUNCTION
-
-                                  ┌──────────────────────────┐
-                                  │   TASK LAMBDA COMPOSER   │
-                                  └──────────────────────────┘
-
-MACHINE ENHANCED COMPONENT ==>    #Can use Lambda FUNCTION as source
-                                  #Adds POLICYs and pass identifiers as ENVVARs to FUNCTION
-
-                                  ┌─────────────────────────┐
-                                  │   TASK LAMBDA METRICS   │
-                                  └─────────────────────────┘
-
-AWS/States/LambdaFunctionRunTime  #Duration (in ms) of LAMBDA_TASKs
-                                  #cdk-monitoring-constructs:
-                                  #  - p50|90|99: METRIC, summary WIDGET, MALARM DurationP50|90|99 > CXALARM_OPTS.maxDuration
-AWS/States/                       #Duration (in ms) of LAMBDA_TASKs, scheduling time only
- LambdaFunctionScheduleTime       #cdk-monitoring-constructs:
-                                  #  - p50|90|99: METRIC, summary WIDGET
-                                  #     - must use new StepFunctionLambdaIntegrationMetricFactory(CMETRIC_FACTORY, CXMONITORING_OPTS)
-                                  #         .metricFunctionScheduleTimeP50|90|99InMillis()
-AWS/States/LambdaFunctionTime     #Duration (is ms) of LAMBDA_TASKs, excluding scheduling
-                                  #cdk-monitoring-constructs:
-                                  #  - p50|90|99: METRIC, summary WIDGET
-                                  #     - must use new StepFunctionLambdaIntegrationMetricFactory(CMETRIC_FACTORY, CXMONITORING_OPTS)
-                                  #         .metricFunctionTimeP50|90|99InMillis()
-
-AWS/States/                       #NUM of LAMBDA_TASKs scheduled
- LambdaFunctionsScheduled         #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET
-AWS/States/LambdaFunctionsStarted #NUM of LAMBDA_TASKs started
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET
-AWS/States/                       #NUM of LAMBDA_TASKs successful
- LambdaFunctionsSucceeded         #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET
-AWS/States/LambdaFunctionsFailed  #NUM of LAMBDA_TASKs failed
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET, MALARM FailedFunctionsCount > CXALARM_OPTS.maxErrorCount
-                                  #  - rate/s: METRIC, WIDGET, MALARM FailedFunctionsRate > CXALARM_OPTS.maxErrorRate
-AWS/States/LambdaFunctionsTimedOut#NUM of LAMBDA_TASKs timed out
-                                  #cdk-monitoring-constructs:
-                                  #  - sum: METRIC, summary WIDGET, MALARM TimedOutFunctionsCount > CXALARM_OPTS.maxErrorCount
-
-DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
-
-                                  ┌─────────────────────────────┐
-                                  │   TASK LAMBDA METRICS IAC   │
-                                  └─────────────────────────────┘
-
-CLAMBDA_TASK.metric
- ('METRIC'[, CMETRIC_OPTS])
- ->CMETRIC                        #Sets DVAR LambdaFunctionArn|Qualifier, statistic 'Sum'
-CLAMBDA_TASK.metricMETRIC         #Same except 'METRIC' omits 'LambdaFunction' prefix, e.g. CLAMBDA_TASK.metricRunTime()
- ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
-
-CFACADE.monitorStepFunction       #For AWS/States/LambdaFunction*
- LambdaIntegration                #Not covered by CFACADE.monitorScope()
- (CXMONITORING_OPTS)              #See cdk-monitoring-constructs doc
-CXMONITORING_OPTS.lambdaFunction  #ICANYFUNC
 
                                   ┌─────────────────────────┐
                                   │   TASK SERVICE NESTED   │
