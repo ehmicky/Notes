@@ -8,14 +8,6 @@ VERSION ==>                       #2024-11-28
 TODO:
   - https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html
      - already done:
-        - Starting state machines:
-           - Redriving state machines
-           - Redriving map runs
-        - Processing input and output:
-           - Context object
-           - Map state input and output fields in Step Functions
-        - Integrating services
-        - Integrating optimized services
         - Logging and monitoring
         - Testing and debugging > Step Functions local
         - Best practices:
@@ -31,6 +23,8 @@ TODO:
   - change description in new_services
   - compare with SWF
   - JSONata
+     - https://docs.aws.amazon.com/step-functions/latest/dg/transforming-data.html#jsonata-functions-provided-by-sfn
+        - document in "TODO" below
   - remove resources related to Step Functions and CloudFormation from my AWS account
 
                                   ┌─────────┐
@@ -595,8 +589,10 @@ EXCLUSIVE FEATURES ==>            #Different pricing (see above), usually cheape
                                   #  - less throttling on StartExecution(): 6000 (burst 6000)
                                   #StartSyncExecution()
 
-MISSING FEATURES ==>              #DescribeStateMachineForExecution(), ListExecutions(), StopExecution()
-                                  #DescribeExecution(): only with ITEM_EXEC, not EXEC
+MISSING FEATURES ==>              #Retrieve EXEC, i.e.:
+                                  #  - DescribeStateMachineForExecution(), ListExecutions()
+                                  #  - DescribeExecution(): except for ITEM_EXEC
+                                  #StopExecution()
                                   #DMAP_CONF.Mode 'DISTRIBUTED'
                                   #EVENT
                                   #ACTIVITY_TASK
@@ -610,7 +606,7 @@ MISSING FEATURES ==>              #DescribeStateMachineForExecution(), ListExecu
 
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
                                   #Def|max DMACHINE.TimeoutSeconds: 5m
-                                  #Def MACHINE_LOGGING.level 'ERROR'
+                                  #Def MACHINE_LOGGING.level 'ALL'
 
 EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXEC:EXPRESS_MID'
 ITEM_EXEC_ARN                     #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXEC:EXPRESS_MID'
@@ -1094,9 +1090,10 @@ INPUT                             #VAL passed to each STATE
 
 TRANSFORM INPUT ==>               #By default, INPUT is kept as is
 
+$states.input                    %#INPUT
+                                 %#Before DSTATE.Arguments transformed it
 DSTATE.Arguments                 %#DOEXPR (def: keep as is). Transforms INPUT
                                  %#Only with STATE_TASK|MAP|PARALLEL
-$states.input                    %#INPUT
 TEST_DATA.afterArguments         %#'INPUT_JSON' after DSTATE.Arguments
 
 DSTATE.InputPath                 $#DSEXPR. Transforms INPUT
@@ -1142,17 +1139,19 @@ OUTPUT                            #VAL (def: INPUT) returned by each STATE
 
 TRANSFORM OUTPUT ==>              #By default, OUTPUT is kept as is
 
-DSTATE.Output                    %#DOEXPR (def: keep as is). Transforms OUTPUT
-                                 %#Not with STATE_FAIL
 $states.result                   %#OUTPUT
+                                 %#Before DSTATE.Output transformed it
                                  %#Only in DSTATE.Output|Assign
                                  %#Only with STATE_TASK|MAP|PARALLEL
+DSTATE.Output                    %#DOEXPR (def: keep as is). Transforms OUTPUT
+                                 %#Not with STATE_FAIL
 
 DSTATE.ResultSelector            $#DOEXPR. Transforms OUTPUT
                                  $#Only with STATE_TASK|MAP|PARALLEL
 DSTATE.ResultPath                $#DZEXPR. Sets OUTPUT as {...INPUT, DZEXPR: OUTPUT}
                                  $#If INPUT.DZEXPR already exists, overrides it
                                  $#null sets OUTPUT as {...INPUT}
+                                 $#'$' sets OUTPUT as {...OUTPUT}
                                  $#Cannot use CONTEXT nor $DVAR
                                  $#Done after ResultSelector
                                  $#Throws 'States.ResultPathMatchFailure' if some DSEXPR does not match
@@ -1210,17 +1209,23 @@ JsonPath.entireContext           $#'$$'
 
 DSTATE.Assign.DVAR                #VAL. "State machine variable"
                                   #Sets $DVAR in any later STATE (not current STATE)
+                                  #Run right after OUTPUT is obtained
+                                 %#  - before DSTATE.Output
+                                 $#  - before DSTATE.ResultSelector
                                   #Can only reference $DVAR inside JSONPath|JSONata
                                  %#$DVAR cannot be set inside a query
                                  %#Other variables assigned inside a query ($VAR := VAL) can only be used inside that query
                                   #Child MACHINEs:
                                   #  - have their own DVAR scope
-                                  #  - can use upper scope's DVARs, but not set them
+                                  #  - can use upper scope's DVARs
+                                  #     - except STATE_MAP with DMAP_CONF.Mode 'DISTRIBUTED'
+                                  #  - cannot set upper scope's DVARs
                                   #  - cannot use lower|sibling scopes' DVARs
                                   #DVAR:
                                   #  - max 80 chars
                                   #  - ID_Continue: letters-like, numbers-like, _, diacretics, U+200C U+200D (zero-width space)
                                   #  - first char: ID_Start: letters-like
+                                  #Max 256KB per STATE, 10MB per EXEC (else throw 'States.DataLimitExceeded')
                                   #Not with STATE_SUCCEED|FAIL
 
 TEST_IN.variables                 #Initial '{DVAR: VAL,...}_JSON'
@@ -1662,6 +1667,7 @@ DCATCH's INPUT ==>                #In first matching DCATCH: STATE's INPUT
 
 DCATCH.Output                    %#ERROR_OUTPUT_DOEXPR (def: keep as is). Transforms ERROR_OUTPUT
 $states.errorOutput              %#ERROR_OUTPUT
+                                 %#Before DSTATE.Output transformed it
                                  %#Only in DCATCH.Output|Assign
                                  %#Only with STATE_TASK|MAP|PARALLEL
 DCATCH.ResultPath                $#Like DSTATE.ResultPath, but on ERROR_OUTPUT
@@ -2090,6 +2096,8 @@ DMAP_CONF.Mode                    #Either:
                                   #  - 'INLINE' (def):
                                   #      - pros:
                                   #         - initial STATE for each ITER is free
+                                  #         - can reference upper scope's DVARs (see above)
+                                  #         - does not require additional PACTIONs (see above)
                                   #      - cons:
                                   #         - max 40 ITEMs
                                   #         - no BATCH
@@ -3380,9 +3388,14 @@ CACTIVITY[_TASK]
                                   │   ENCRYPTION   │
                                   └────────────────┘
 
-MACHINE.encryptionConfiguration   #ENCRYPT. Encrypts 'DMACHINE_JSON' and EVENTs at rest
-                                  #Also encrypts EXEC.input|output and (unless undefined) EXEC.error|cause
-ACTIVITY.encryptionConfiguration  #ENCRYPT. Encrypts ACTIVITY_TASK.input|output and (unless undefined) ACTIVITY_TASK.error|cause
+MACHINE.encryptionConfiguration   #ENCRYPT. Encrypts at rest:
+                                  #  - 'DMACHINE_JSON'
+                                  #  - EVENTs
+                                  #  - EXEC.input|output
+                                  #  - EXEC.error|cause (if set)
+ACTIVITY.encryptionConfiguration  #ENCRYPT. Encrypts at rest:
+                                  #  - ACTIVITY_TASK.input|output
+                                  #  - ACTIVITY_TASK.error|cause (if set)
 
 ENCRYPT.type                      #Either:
                                   #  - 'AWS_OWNED_KEY' (def): AWS managed KMS KEY
@@ -3394,7 +3407,7 @@ ENCRYPT
 
 MACHINE_GET.includedData          #Whether to return MACHINE.definition: 'ALL_DATA' (yes, def) or 'METADATA_ONLY' (no)
                                   #Meant when ENCRYPT.kmsKeyId used and caller does not have KMS permission
-EXEC_GET.includedData             #Same but with EXEC.input|output
+EXEC_GET.includedData             #Same but with EXEC.input|output|error|cause
 EXEC.inputDetails|outputDetails
  .included                        #Same as BOOL
 
@@ -3461,7 +3474,7 @@ PACTION kms:GenerateDataKey       #If ENCRYPT.kmsKeyId, must be allowed on:
                                   #  - Resource KEY_ARN
                                   #  - Principal MACHINE.roleArn
                                   #  - COND_KEY kms:EncryptionContext:SourceArn 'arn:aws:logs:REGION:ACCOUNT_ID:*'
-PACTION kms:Decrypt*              #If ENCRYPT.kmsKeyId, must be allowed on:
+PACTION kms:Decrypt               #If ENCRYPT.kmsKeyId, must be allowed on:
                                   #  - Resource '*'
                                   #  - Principal.Service 'delivery.logs.amazonaws.com'
 
@@ -3567,8 +3580,7 @@ NOTATION ==>                     %#Notation for JSONata-specific documentation
 
 DSEXPR|DZEXPR|DFEXPR|DOEXPR      %#All mean the same thing: any value can be "{% ... %}" where ... is a JSONata query
                                  %#Substituted with its result
-                                 %#On error, throws 'States.QueryEvaluationError'
-                                 %#Does not error if no match, just substitute with undefined
+                                 %#If no match, or on error, throws 'States.QueryEvaluationError'
 
 $states.*                        %#Special DVARs, documented below
                                  %#Cannot be set
@@ -3595,6 +3607,12 @@ CDK ==>                           #Does not support JSONata yet
                                   └──────────────────┘
 
 statelint                        %#Currently ignores JSONata fields, i.e. does not lint them, but does not fail either
+
+                                  ┌───────────────────────┐
+                                  │   JSONATA FUNCTIONS   │
+                                  └───────────────────────┘
+
+TODO ==>                          #
 
                                   ┌──────────────┐
                                   │   JSONPATH   │
