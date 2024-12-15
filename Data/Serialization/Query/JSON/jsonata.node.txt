@@ -96,19 +96,21 @@ jfq ['QUERY'] [PATH...]           #Evaluates QUERY and print its result
 
 $                                 #Context
 
+VAL.(...)
+VAL.{...}
+VAL.[...]
 OBJ....
-OBJ.(...)
-OBJ.{...}
-OBJ.[...]
 | ... | ... |
 ARR[...]
 ARR^(...)                         #$ in ... in the value from the left hand
+
+VAL.(...)                         #Like ... but using VAL as $
 
 {...}                             #$ stays same inside ... (literal VAL)
 [...]                             #E.g. $ and {"VAR": [$]} use the same value for $
 
 IMPLICIT CONTEXT                  #If EXPR does not start with $, it is implicit
-                                  #E.g. VAR -> $.VAR
+                                  #E.g. VAR -> $.VAR or `VAR` -> $.`VAR`
                                   #Not for $[...] since it is ambiguous with literal ARR [...]
 
 %                                 #Parent context
@@ -120,9 +122,11 @@ $$                                #Initial|root context
                                   │   EXPRESSION   │
                                   └────────────────┘
 
-TYPES ==>                         #JSON types + FUNC + undefined
+TYPES ==>                         #JSON types + FUNC
 
-BOOL|STR|NUM|null|OBJ|ARR         #Literal values
+undefined                         #Omitted in OBJ and ARR
+
+null|BOOL|NUM|STR|OBJ|ARR         #Literal values
                                   #Same format as JSON
                                   #I.e. JSONata is superset of JSON
 '...'                             #Literal value. Same as "..." except must escape " instead of '
@@ -135,7 +139,7 @@ VAL                               #Any value documented here is either:
                                   #  - literal JSON value (or '...'): if follows syntax
                                   #  - EXPR: else
                                   #E.g.:
-                                  #  - either {...}.{"VAR": "VAL", ...} or OBJ_EXPR.{VAR_EXPR: EXPR, ...}
+                                  #  - {...}.{"VAR": EXPR, ...} vs OBJ_EXPR.{VAR_EXPR: "VAL", ...}
                                   #  - ARR[BOOL_EXPR]
                                   #  - OBJ.(EXPR)
                                   #For OBJ keys: literal if 'VAR' or "VAR", EXPR if unquoted
@@ -145,22 +149,33 @@ VAL                               #Any value documented here is either:
                                   │   ITERATION   │
                                   └───────────────┘
 
-$FUNC(ARR, ...)                   #If FUNC|operator's argument is not expected to be an ARR, iterates over FUNC|operator
-ARR...                            #Result is ARR2
+ARR.$FUNC(...)                    #Maps ARR items with FUNC
+                                  #Except if FUNC's argument is expected to be an ARR
+ARR....                           #Same with any dot-separated operator: ARR.VAR, ARR.(...), ARR.{...}, ARR.[...], etc.
                                   #E.g. OBJ_ARR.VAR -> [OBJ.VAR, OBJ2.VAR, ...]
-(ARR)...                          #Prevents iteration, i.e. use a whole
+$FUNC(ARR, ...)
+$.[ARR].$FUNC(...)
+$.[ARR]...                        #Prevents iteration, i.e. use a whole
 
-$FUNC(VAL, ...)                   #If FUNC|operator's argument is expected to be an ARR, implicitely calls it with [VAL],
-VAL...:                           #if VAL is not an ARR
+$FUNC(VAL, ...)                   #If FUNC expects an ARR, but VAL is not an ARR, converts it to [VAL]
+VAL[...]
+VAL^(...)
+VAL{...}                          #Same with operators that expect ARRs
 
-SINGLE ITEM ==>                   #If FUNC|operator returns a top-level single item ARR, it is converted to non-ARR instead
+EMPTY ARRAY ==>                   #If FUNC|operator returns a top-level ARR with no items, it is converted to undefined instead
+[VAL]                             #Prevents that conversion, since it is not applied to literal ARRs, and undefined are omitted
+
+SINGLE ITEM ==>                   #If FUNC|operator returns a top-level ARR with a single item, it is converted to non-ARR instead
 VAL[]                             #Prevents that conversion
 
-EMPTY ARRAY ==>                   #If FUNC|operator returns a top-level single item ARR, it is converted to undefined instead
-[VAL]                             #Prevents that conversion
-
-NESTED ARRAY ==>                  #If FUNC|operator returns a top-level ARR_ARR, it is flattened
-ARR.[...]                         #Like ARR.... but does not flatten
+OBJ_ARR.$FUNC(...)                #If $FUNC(OBJ)->ARR, flattens
+ARR.(...)
+OBJ_ARR.VAR
+OBJ_ARR.`VAR`
+OBJ_ARR.*
+OBJ_ARR.**                        #Same with any dot-separated operator returning an ARR
+ARR[...]
+ARR.[...]                         #Not flattened. E.g. can be used to prevent flattening: OBJ_ARR.[$FUNC(...)], ARR.[(...)], etc.
 
                                   ┌────────────────┐
                                   │   STATEMENTS   │
@@ -169,7 +184,7 @@ ARR.[...]                         #Like ARR.... but does not flatten
 /* COMMENT */                     #Can be inline
 
 (VAL)                             #Operator precedence
-                                  #Order is . [] ^ # @ grouping
+                                  #Order is . [] ^ # @
 
 (VAL;...)                         #Evaluates all VALs, returns last one
                                   #I.e. meant for multiple statements, e.g.:
@@ -179,6 +194,7 @@ ARR.[...]                         #Like ARR.... but does not flatten
 BOOL ? VAL : VAL2                 #Implicitely typecast (using $boolean())
 
 $error('MESSAGE')                 #Throws ERROR
+$assert(BOOL, 'MESSAGE')          #BOOL ? undefined : $error('MESSAGE')
 
 $eval('QUERY'[, $$])->VAL         #Evaluate JSONata inside JSONata itself
                                   #Since JSONata is superset of JSON, can JSON parse too
@@ -188,12 +204,12 @@ $eval('QUERY'[, $$])->VAL         #Evaluate JSONata inside JSONata itself
                                   │   FUNCTION CALL   │
                                   └───────────────────┘
 
-$FUNC(...)                        #
+$FUNC(...)                        #Calls FUNC
 
 VAL.$FUNC(...)                    #Same as $FUNC(VAL, ...)
                                   #Possible with every built-in FUNC|operator
                                   #Not possible when VAL is ARR
-                                  #  - since it is ambiguous with ARR iteration
+                                  #  - since it is ambiguous with ARR mapping
                                   #Not possible when next argument is passed and it has same type (or subtype) as VAL
                                   #  - since it is ambiguous
                                   #  - e.g. NUM.$round(NUM2) or STR.$string(true) (since true is typecastable to STR)
@@ -232,17 +248,21 @@ function(...) <TYPES> { ... }     #Validates input of FUNC. Optional
                                   #Last T is return type
                                   #E.g. <a(an):n>
                                   #T is any of the following
+
 l                                 #null
 b                                 #BOOL
 n                                 #NUM
 s                                 #STR
 a                                 #ARR
+a<T>                              #ARR of T
 o                                 #OBJ
 f                                 #FUNC
+f<TYPES>                          #FUNC with specific signature
+
 u                                 #null|BOOL|NUM|STR
 j                                 #null|BOOL|NUM|STR|ARR|OBJ
 x                                 #null|BOOL|NUM|STR|ARR|OBJ|FUNC
-a<T>                              #ARR of T
+
 (T...)                            #Union (or)
 T?                                #Optional
 T+                                #Variadic (>=1)
@@ -253,12 +273,13 @@ T-                                #Allows VAL.$FUNC(...) with VAL being this arg
                                   └───────────────┘
 
 $VAR := VAL                       #Assignment
-                                  #Assigning:
-                                  #  - $ is a noop
-                                  #  - $$ is possible (but should not)
+
 QUERY.assign('VAR', VAL)
 QUERY.evaluate
  (..., {VAR: VAL, ...})           #Assignment from JavaScript
+
+$ := VAL                          #Noop
+$$ := VAL                         #Possible (but should not do it)
 
 $VAR                              #Referencing
                                   #If unknown: undefined (no ERROR)
@@ -300,7 +321,9 @@ VAL.$boolean()->BOOL              #Typecast. false if:
                                   #  - FUNC
 
 BOOL and BOOL2                    #BOOL3
+                                  #Implicitely typecast (using $boolean())
 BOOL or BOOL2                     #BOOL3
+                                  #Implicitely typecast (using $boolean())
 BOOL.$not()->BOOL2                #Implicitely typecast (using $boolean())
 
                                   ┌────────────┐
@@ -348,11 +371,12 @@ VAL.$string([BOOL])->STR          #Typecast using JSON.stringify(VAL)
                                   #  - Inf|NaN: error
                                   #  - FUNC: empty STR
 
-STR < <= > >= STR2                #BOOL. Using Unicode codepoint
+STR < <= > >= STR2                #BOOL
 
-STR & STR2                        #STR3. Concat. Implicitely typecast (using $string())
+STR & STR2                        #STR3. Concat
+                                  #Implicitely typecast (using $string())
 
-STR.$length()->NUM                #NUM of chars
+STR.$length()->NUM                #NUM of codepoints
 
 STR.$contains(STR2)->BOOL         #
 STR.$substring(NUM[, NUM2])->STR2 #From index NUM (included)
@@ -362,7 +386,7 @@ STR.$substringBefore(STR2)->STR3  #From beginning to first occurence of STR2 (ex
 STR.$substringAfter(STR2)->STR3   #From first occurence of STR2 (excluded) (if any) to end
 
 STR.$uppercase|$lowercase()->STR2 #
-STR.$trim()->STR2                 #Trim whitespaces
+STR.$trim()->STR2                 #Trim whitespaces (space \t \n \r)
                                   #Also squash multiple whitespaces into single spaces
 STR.$pad(NUM[, 'CHAR'])->STR2     #Pad to right, if needed, using CHAR (def: space)
                                   #Pad to left if NUM negative
@@ -380,41 +404,15 @@ STR.$encode|decodeUrl[Component]()
                                   └────────────┘
 
 OBJ.VAR                           #VAL
-OBJ.`VAR`
-OBJ.$lookup('VAR')->VAL           #Needed when VAR contains ASCII punctuation (except for - _ ' " ` \)
 
-OBJ.*                             #All direct values, as ARR
+OBJ.`VAR`                         #Needed when VAR contains ASCII punctuation (except for - _ ' " ` \), due to ambiguity with operators
+OBJ.$lookup('VAR')->VAL           #Or when starts with $, due to ambiguity with $DVAR
+
+OBJ.*                             #All values, as ARR
 OBJ.**                            #All values, deeply (depth-first search), as ARR
 
-OBJ.(...)                         #Like ... but using OBJ as $
-OBJ.{...}                         #Like {...} but using OBJ as $
-                                  #Usually meant to transform OBJ, e.g. {"a": 2}.{"a": a * 3}
-OBJ.[...]                         #Same with [...]
-
-OBJ_ARR{...}                      #Like OBJ.{...} but merges every resulting OBJ2 into a single OBJ3
-                                  #Leaf value that are in several OBJ2s are concatenated as an ARR value
-                                  #  - e.g. [{"a": 1}, {"a": 2}]{"a": a} -> {"a": [1, 2]}
-                                  #I.e. meant for grouping
-                                  #Done deeply, e.g.:
-                                  #  - [{"a": 1}, {"a": 2}]{"a": {"b": a}} -> {"a": {"b": [1, 2]}}
-                                  #  - [{"a": {"b": 1}}, {"a": {"b": 2}}]{"a": a.b} -> {"a": [1, 2]}
-                                  #But not inside nested queries, e.g.:
-                                  #  - [{"a": 1}, {"a": 2}]{"a": $.{"b": a}} -> {"a": [{"b": 1}, {"b": 2}]}
-                                  #  - [{"a": 1}, {"a": 2}]{"a": $.[a]} -> {"a": [[1], [2]]}
-(OBJ_ARR{...})                    #Must be wrapped in () if not last in query, due to operator precedence
-OBJ_ARR{VAR: $.(... OP ...), ...}
-OBJ_ARR{VAR: $.($FUNC(...)), ...} #$.(...) must be used in leaf values if they use FUNC|operators
-OBJ_ARR{VAR: VAL.$FUNC(...), ...} #Except for VAL.$FUNC() notation
-OBJ_ARR{VAR: $FUNC(VAL), ...}     #Calls $FUNC(ARR), i.e. aggregates
-
-| ... | OBJ[, "VAR"[_ARR]] |      #FUNC(OBJ2)->OBJ3
-                                  #OBJ2.(...) = $merge([OBJ2.(...), OBJ])
-                                  #Also deletes OBJ2.(...).VAR
-                                  #OBJ2.(...) must be an OBJ
-                                  #OBJ2.(...) is $ in OBJ and "PROP"
-                                  #  - i.e. can transform, not just set
-OBJ2 ~> | ... | ... |             #Usually called this way
-                                  #E.g. {"a": {"b": 2}} ~> | a | {"b": b * 2} | -> {"a": {"b": 4}}
+VAL.{...}                         #Like {...} but using VAL as $, i.e. OBJ templating|transform
+                                  #E.g. {"a": 2}.{"a": a * 3}
 
 OBJ.$keys()->'VAR'_ARR            #If duplicate (due to iterations), unique only
 OBJ.$spread()->OBJ2_ARR           #Each OBJ2 contains single entry, i.e. {VAR: VAL}
@@ -423,9 +421,48 @@ OBJ.$each(FUNC(VAL, 'VAR')->VAL2)
  ->VAL2_ARR                       #Maps
 OBJ.$sift
  (FUNC(VAL, 'VAR', OBJ)->BOOL)
- ->OBJ                            #Only include VARs that return true
+ ->OBJ                            #Filter VARs
 
 $merge(OBJ_ARR)->OBJ              #Shallow merge
+$clone(OBJ|ARR)->OBJ2|ARR2        #Deep clone
+
+                                  ┌───────────┐
+                                  │   GROUP   │
+                                  └───────────┘
+
+OBJ_ARR{...}                      #Like {...} but mapping eveery non-literal EXPR over OBJ_ARR
+                                  #{...} is evaluated only once, i.e. returns an OBJ, e.g.:
+                                  #  - [{"a": 1}, {"a": 2}]{"a": a} -> {"a": [1, 2]}
+                                  #  - [{"a": {"b": 1}}, {"a": {"b": 2}}]{"a": a.b} -> {"a": [1, 2]}
+                                  #I.e. meant for grouping
+                                  #EXPR can be deep, e.g.:
+                                  #  - [{"a": 1}, {"a": 2}]{"a": {"b": a}} -> {"a": {"b": [1, 2]}}
+                                  #But not inside EXPR with explicit $ binding, e.g.:
+                                  #  - [{"a": 1}, {"a": 2}]{"a": $.{"b": a}} -> {"a": [{"b": 1}, {"b": 2}]}
+                                  #  - [{"a": 1}, {"a": 2}]{"a": $.[a]} -> {"a": [[1], [2]]}
+
+(OBJ_ARR{...})                    #Must be wrapped in () if not last in query, due to operator precedence
+
+OBJ_ARR{VAR: $.(... OP ...), ...}
+OBJ_ARR{VAR: $.($FUNC(...)), ...} #$.(...) must be used in any EXPR using FUNCs|operators
+
+OBJ_ARR{VAR: VAL.$FUNC(...), ...} #Except when using VAL.$FUNC() notation
+
+OBJ_ARR{VAR: $FUNC(VAL), ...}     #Calls $FUNC(ARR), i.e. aggregates
+
+                                  ┌────────────┐
+                                  │   MUTATE   │
+                                  └────────────┘
+
+| ... | OBJ[, "VAR"[_ARR]] |      #FUNC(OBJ2)->OBJ3
+                                  #OBJ2.(...) = $merge([OBJ2.(...), OBJ])
+                                  #Also deletes OBJ2.(...).VAR
+                                  #OBJ2.(...) must be an OBJ
+                                  #OBJ2.(...) is $ in OBJ and "PROP"
+                                  #  - i.e. can transform, not just set
+
+OBJ2 ~> | ... | ... |             #Usually called this way
+                                  #E.g. {"a": {"b": 2}} ~> | a | {"b": b * 2} | -> {"a": {"b": 4}}
 
                                   ┌───────────┐
                                   │   ARRAY   │
@@ -439,6 +476,9 @@ ARR[NUM_ARR]->ARR2                #
 [NUM..NUM2]->NUM3_ARR             #From NUM (included) to NUM2 (included)
 [NUM..NUM2, NUM3, ...]
 [NUM..NUM2, NUM3..NUM4, ...]      #Concat
+
+VAL.[...]                         #Like [...] but using VAL as $, i.e. ARR templating|transform
+                                  #E.g. {"a": 2}.[a, a * 2]
 
 ARR[BOOL]->ARR2                   #Filters
                                   #Implicitely typecast (using $boolean())
@@ -475,7 +515,6 @@ $reduce(ARR,
 
 $zip(ARR,...)->ARR2               #ARR2[m][n] is args[n][m]
 
-
                                   ┌────────────┐
                                   │   REGEXP   │
                                   └────────────┘
@@ -495,7 +534,7 @@ REGEXP-LIKE ==>                   #Can be done by passing a FUNC with same signa
 
 STR.$match(REGEXP[, NUM])         #Same logic, iterating until end
  ->MATCH_OBJ_ARR                  #NUM truncates resulting ARR length
-STR.$contains(REGEXP)->BOOL       #
+STR.$contains(STR2|REGEXP)->BOOL  #
 
 STR.$replace
  (REGEXP, FUNC(MATCH_OBJ)->STR2)  #Replace all
