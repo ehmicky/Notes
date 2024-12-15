@@ -1124,7 +1124,8 @@ new WebSocketRouteIntegration
 CANY_INTEGRATION.bind(OPTS)     -~#Must be redefined
  ->CANY_INTEGRATION_OPTS          #OPTS: route|scope ICROUTE
 CANY_INTEGRATION_OPTS.type      -~#INTEGRATION.type
-CANY_INTEGRATION_OPTS.subtype    -#INTEGRATION.integrationSubtype
+CANY|STEP_INTEGRATION_OPTS
+ .subtype                        -#INTEGRATION.integrationSubtype
 
 new MockIntegration
  ([CMOCK_INTEGRATION_OPTS])      =
@@ -1176,7 +1177,7 @@ CANY|AWS_INTEGRATION_OOPTS
  .requestParameters
  |requestTemplates
  |passthroughBehavior            ~#INTEGRATION.*
-CANY|HTTP|LAMBDA|VPC
+CANY|HTTP|LAMBDA|STEP|VPC
  _INTEGRATION_OPTS
  .parameterMapping               -#CREQ_PARAMS. INTEGRATION.requestParameters
 
@@ -1488,49 +1489,6 @@ AWS::ApiGatewayV2::Integration  -~#Includes RESPROPs: PayloadFormatVersion
 AWS::ApiGatewayV2::
  ApiGatewayManagedOverrides      -#Includes RESPROPs: Integration: PayloadFormatVersion
 
-StepFunctionsIntegration
- .startExecution(ICMACHINE
- [, CSTEP_INTEGRATION_OPTS])     =#CINTEGRATION with:
-                                  #  - INTEGRATION.type 'AWS[_PROXY]'
-                                  #  - INTEGRATION.uri for StepFunctions StartSyncExecution()
-                                  #  - def INTEGRATION.passthroughBehavior 'NEVER'
-                                  #  - def INTEGRATION.credentials:
-                                  #     - new ROLE
-                                  #     - assumabled by Service.Principal 'apigateway.amazonaws.com'
-                                  #     - allowed PACTION 'states:StartSyncExecution' to MACHINE
-                                  #  - def INTEGRATION.requestTemplates: StartSyncExecution() request with INPUT.*:
-                                  #     - body STR: request body
-                                  #     - header HEADERS_OBJ
-                                  #        - if OPTS.headers true (def: false)
-                                  #     - querystring QUERY_OBJ
-                                  #        - if OPTS.querystring true (def)
-                                  #     - path.PATHVAR 'VAL'
-                                  #        - if OPTS.path true (def)
-                                  #     - authorizer CONTEXT.authorizer
-                                  #        - if OPTS.authorizer true (def: false)
-                                  #     - requestContext.VAR CONTEXT.VAR2
-                                  #        - if OPTS.requestContext.VAR true (def: false)
-                                  #        - VAR2 -> VAR is as is except
-                                  #           - identity.VAR -> VAR
-                                  #           - authorizer.principalId -> authorizerPrincipalId
-                                  #  - def IRESPs:
-                                  #     - 200: OUTPUT
-                                  #     - 400: {error: 'Bad request!'}
-                                  #     - 500: ERROR_OUTPUT
-                                  #        - including if EXEC failed
-                                  #     - all with Content-Type: application/json [S]
-                                  #  - def RRESPs: 200|400|500 with Content-Type: application/json [S]
-                                  #     - only if OPTS.useDefaultMethodResponses true (def)
-                                  #  - new DEPLOYMENT:
-                                  #     - when the following changes:
-                                  #        - CMACHINE: 'MACHINE' name
-                                  #        - ICMACHINE: MACHINE 'NID'
-                                  #     - unless CAPI_OPTS.deploy false
-
-new HttpStepFunctionsIntegration
- ('CONSTRUCT'
- [, CSTEP_INTEGRATION_OPTS])     -#CINTEGRATION with:
-
 new LambdaIntegration(ICANYFUNC  =#CINTEGRATION with:
  [, CLAMBDA_INTEGRATION_OPTS])    #  - INTEGRATION.type 'AWS[_PROXY]'
                                   #  - INTEGRATION.uri for Lambda, without any QUALIFIER
@@ -1604,6 +1562,64 @@ AWS::Serverless::Connector        #Can be used with:
                                   └─────────────────────────────────┘
 
 API ENHANCED COMPONENT ==>        #Can connect to FUNCTION to create Lambda INTEGRATION
+
+                                  ┌────────────────────────────────────┐
+                                  │   INTEGRATION STEP FUNCTIONS IAC   │
+                                  └────────────────────────────────────┘
+
+new HttpStepFunctionsIntegration -#CINTEGRATION with:
+ ('CONSTRUCT'                     #  - INTEGRATION.type 'AWS_PROXY'
+ [, CSTEP_INTEGRATION_OPTS])      #  - INTEGRATION.subtype 'StepFunctions-...' (i.e. first-class)
+                                  #     - def: 'StepFunctions-StartExecution'
+                                  #INTEGRATION.credentials is a new ROLE
+                                  #  - assumabled by Service.Principal 'apigateway.amazonaws.com'
+                                  #  - allowed PACTION 'states:...Execution' to MACHINE
+CSTEP_INTEGRATION_OPTS
+ .stateMachine                   -#ICMACHINE
+
+PARAMS.*                         -#Passed as EXEC.*
+                                  #No need to set EXEC.StateMachineArn: automatically set
+
+StepFunctionsIntegration         =#CINTEGRATION with:
+ .startExecution(ICMACHINE        #  - INTEGRATION.type 'AWS_PROXY'
+ [, CSTEP_INTEGRATION_OPTS])      #  - INTEGRATION.uri for StartSyncExecution()
+                                  #INTEGRATION.credentials is a new ROLE
+                                  #  - assumabled by Service.Principal 'apigateway.amazonaws.com'
+                                  #  - allowed PACTION 'states:StartSyncExecution' to MACHINE
+
+INTEGRATION.requestTemplates     =#Automatically set to pass following INPUT.*
+INPUT.path.PATHVAR               =#'VAL'
+                                  #Only if OPTS.path true (def)
+INPUT.header                     =#HEADERS_OBJ
+                                  #Only if OPTS.headers true (def: false)
+INPUT.querystring                =#QUERY_OBJ
+                                  #Only if OPTS.querystring true (def)
+INPUT.body                       =#STR. Request body
+INPUT.authorizer                 =#CONTEXT.authorizer
+                                  #Only if OPTS.authorizer true (def: false)
+INPUT.requestContext.VAR         =#CONTEXT.VAR2
+                                  #Only if OPTS.requestContext.VAR true (def: false)
+                                  #'VAR2' is 'VAR' as is except
+                                  #  - identity.VAR -> VAR
+                                  #  - authorizer.principalId -> authorizerPrincipalId
+                                  #Some VARs not available, see source code at:
+                                  #  https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-apigateway/lib/integrations/stepfunctions.ts#L300
+
+IRESPS ==>                       =#Automatically set:
+                                  #  - 200: OUTPUT
+                                  #  - 400: {error: 'Bad request!'}
+                                  #  - 500: ERROR_OUTPUT
+                                  #     - including if EXEC failed
+                                  #All with Content-Type: application/json [S]
+                                  #Sets INTEGRATION.passthroughBehavior 'NEVER'
+
+RRESPS ==>                       =#Automatically set for 200|400|500 with Content-Type: application/json [S]
+                                  #Only if OPTS.useDefaultMethodResponses true (def)
+
+DEPLOYMENT ==>                   =#New DEPLOYMENT when the following changes:
+                                  #  - CMACHINE: 'MACHINE' name
+                                  #  - ICMACHINE: MACHINE 'NID'
+                                  #Unless CAPI_OPTS.deploy false
 
                                   ┌─────────┐
                                   │   VPC   │
@@ -2045,7 +2061,8 @@ ParameterMapping.fromObject(OBJ)
  ->CREQ_PARAMS                   -#
 
 CREQ_PARAMS.custom
- ('KEY', CREQ_VAL)->CREQ_PARAMS  -#Key 'KEY'
+ ('KEY', 'VAL')->CREQ_PARAMS     -#Key 'KEY', value 'VAL'
+
 CREQ_PARAMS.overwritePath
  (CREQ_VAL)->CREQ_PARAMS         -#Key 'overwrite:path'
 CREQ_PARAMS
