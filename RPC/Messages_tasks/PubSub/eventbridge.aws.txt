@@ -37,10 +37,7 @@ TODO EventBridge Rule:
      - https://docs.aws.amazon.com/step-functions/latest/dg/eventbridge-integration.html
      - https://docs.aws.amazon.com/step-functions/latest/dg/tutorial-cloudwatch-events-s3.html
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-bus.html
-     - already read:
-        - Events:
-           - AWS service events:
-              - Event metadata
+     - stopped at: Events > AWS service events > Events via CloudTrail > Management events
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-integrations.html
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-monitoring.html
   - https://docs.aws.amazon.com/eventbridge/latest/onboarding/amazon_eventbridge_partner_onboarding_guide.html
@@ -104,7 +101,7 @@ BUS                               #Group that receives EVENTs and sends them to 
                                   #  - partner: AWS registered partner (below)
 
 BUS.Arn                           #'BUS_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:event-bus/BUS'
-BUS.Name                          #'BUS'.
+BUS.Name                          #'BUS' (def: 'default' with DescribeEventBus())
                                   #Only [:alnum:]-_., max 256 chars
 BUS.Description                   #STR. Max 512 chars
 BUS.CreationTime                  #DATE_NUM
@@ -144,8 +141,7 @@ DeleteEventBus()                  #Req: BUS
 DEFAULT BUS ==>                   #BUS with name 'default'
                                   #Already created, cannot be deleted
                                   #Receives EVENTs from AWS SERVICEs
-                                  #  - from CloudTrail???
-                                  #Def 'BUS' with DescribeEventBus()
+                                  #But can be used for any other purposes
 
 CUSTOM BUS ==>                    #Other BUSs receiving EVENTs from PutEvents() calls
 
@@ -158,6 +154,16 @@ COND_KEY events:
 COND_KEY
  events:detail.eventTypeCode      #DETAIL.eventTypeCode. For PutRule()
 COND_KEY events:detail.service    #DETAIL.service. For PutRule()
+
+                                  ┌─────────────────┐
+                                  │   DEFAULT IAC   │
+                                  └─────────────────┘
+
+DEFAULT BUS ==>                   #No need to declare if keep default RESPROPs
+                                  #Else must:
+                                  #  - import with CHANGESET.ResourcesToImport
+                                  #  - RESOURCE.DeletionPolicy 'Retain'
+                                  #  - RESPROP Name 'default'
 
                                   ┌────────────┐
                                   │   SOURCE   │
@@ -307,6 +313,7 @@ RULE                              #Filters, schedules and redirects EVENTs
                                   #Should be careful about infinite loops, for cost reasons
                                   #Cannot delete if there are some TARGETs
                                   #Delete is idempotent
+                                  #Max 300 (soft) per BUS
 RULE.Arn                          #'RULE_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:rule[/BUS]/RULE'
                                   #'/BUS' is omitted for default BUS
 RULE.Name                         #'RULE'
@@ -327,12 +334,7 @@ RULE.State                        #One of:
                                   #  - 'ENABLED[_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS]'
                                   #     - [not] including management EVENTs from CloudTrail
 
-RULE.ScheduleExpression           #STR. Trigger that EVENT regularly
-                                  #Can be:
-                                  #  - 'cron(...)'
-                                  #  - 'rate(...)'
-                                  #Max 256 chars
-                                  #(more info in ListRules())
+RULE.ScheduleExpression           #See EventBridge Scheduler doc
 
                                   ┌───────────────┐
                                   │   RULE AUTH   │
@@ -570,8 +572,10 @@ RETRY_POLICY                      #Max NUM (in secs) of time to keep retrying on
 RETRY_POLICY.MaximumRetryAttempts #NUM of retries on failed EVENTs
                                   #Min|def: 0, max: 185
 
-BUS|TARGET.DeadLetterConfig.Arn   #'SQS_QUEUE_ARN' to send failed EVENTs
-                                  #Including requests which waited 24h due to API_DEST.InvocationRateLimitPerSecond
+BUS|TARGET.DeadLetterConfig.Arn   #'SQS_QUEUE_ARN' to send failed EVENTs, including:
+                                  #  - could not send to TARGET
+                                  #  - request waited 24h due to API_DEST.InvocationRateLimitPerSecond
+                                  #  - encrypting failed
 
                                   ┌─────────────────┐
                                   │   DESTINATION   │
@@ -840,19 +844,23 @@ DeleteEndpoint()                  #Req: ENDPOINT
                                   │   ARCHIVE   │
                                   └─────────────┘
 
-ARCHIVE                           #
+ARCHIVE                           #Stores EVENTs
                                   #Not if BUS.KmsKeyIdentifier set
 ARCHIVE.ArchiveArn                #'ARCHIVE_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:archive/ARCHIVE'
 ARCHIVE.ArchiveName               #'ARCHIVE'
-ARCHIVE.CreationTime              #DATE_NUM
 ARCHIVE.Description               #STR
-ARCHIVE.EventCount                #NUM
-ARCHIVE.EventPattern              #STR
-ARCHIVE.EventSourceArn            #STR (more info with ListArchives())
-ARCHIVE.RetentionDays             #NUM (more info with CreateArchive(), ListArchives())
-ARCHIVE.SizeBytes                 #NUM
+ARCHIVE.CreationTime              #DATE_NUM
+
 ARCHIVE.State                     #STR
 ARCHIVE.StateReason               #STR
+
+ARCHIVE.EventSourceArn            #STR (more info with ListArchives())
+ARCHIVE.EventPattern              #STR
+
+ARCHIVE.RetentionDays             #NUM (more info with CreateArchive(), ListArchives())
+
+ARCHIVE.EventCount                #NUM
+ARCHIVE.SizeBytes                 #NUM
 
                                   ┌─────────────────┐
                                   │   ARCHIVE API   │
@@ -885,17 +893,21 @@ DeleteArchive()                   #Req: ARCHIVE
                                   │   REPLAY   │
                                   └────────────┘
 
+REPLAY                            #Re-emit stored EVENTs
 REPLAY.ReplayArn                  #'REPLAY_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:replay/REPLAY'
 REPLAY.ReplayName                 #'REPLAY'
 REPLAY.Description                #STR
-REPLAY.EventEndTime               #DATE_NUM (more info with StartReplay())
-REPLAY.EventLastReplayedTime      #DATE_NUM
-REPLAY.EventStartTime             #DATE_NUM (more info with StartReplay(), ListReplays())
-REPLAY.ReplayEndTime              #DATE_NUM
-REPLAY.ReplayStartTime            #DATE_NUM
+
 REPLAY.EventSourceArn             #STR
+
 REPLAY.State                      #STR
 REPLAY.StateReason                #STR
+
+REPLAY.EventStartTime             #DATE_NUM (more info with StartReplay(), ListReplays())
+REPLAY.EventEndTime               #DATE_NUM (more info with StartReplay())
+REPLAY.ReplayStartTime            #DATE_NUM
+REPLAY.ReplayEndTime              #DATE_NUM
+REPLAY.EventLastReplayedTime      #DATE_NUM
 
 REPLAY.Destination                #REPLAY_DEST
 REPLAY_DEST.Arn                   #STR
@@ -1004,43 +1016,35 @@ PAGINATION ==>                    #Uses REQ.Limit (def|max: 100) + REQ|RES.NextT
                                   │   PIPE   │
                                   └──────────┘
 
+PIPE                              #Like an EventBridge BUS + single RULE + single TARGET
+                                  #  - but with more advanced input logic
 PIPE.Arn                          #'PIPE_ARN'. 'arn:aws:pipes:REGION:ACCOUNT_ID:pipe/PIPE'
 PIPE.Name                         #'PIPE'
-PIPE.CreationTime                 #DATE_NUM
-PIPE.CurrentState                 #STR
 PIPE.Description                  #STR
-PIPE.DesiredState                 #STR (more info with DescribePipe())
-PIPE.KmsKeyIdentifier             #STR (more info with CreatePipe(), UpdatePipe())
+PIPE.CreationTime                 #DATE_NUM
 PIPE.LastModifiedTime             #DATE_NUM
-PIPE.Source                       #STR
+
+PIPE.CurrentState                 #STR
 PIPE.StateReason                  #STR
-PIPE.Target                       #STR
+PIPE.DesiredState                 #STR (more info with DescribePipe())
 
-PIPE.Enrichment                   #STR
-PIPE.EnrichmentParameters         #ENRICH
-ENRICH.InputTemplate              #STR
-ENRICH.HttpParameters             #HTTP_TARGET (same as EventBridge Rules???)
+PIPE.KmsKeyIdentifier             #STR (more info with CreatePipe(), UpdatePipe())
 
-PIPE.LogConfiguration             #LOGGING
-LOGGING.Level                     #STR
-LOGGING.IncludeExecutionData      #STR_ARR (more info with CreatePipe())
-LOGGING
- .CloudwatchLogsLogDestination
- .LogGroupArn                     #STR
-LOGGING.FirehoseLogDestination
- .DeliveryStreamArn               #STR
-
-LOGGING.S3LogDestination          #S3_LOGGING
-S3_LOGGING.BucketName             #STR
-S3_LOGGING.BucketOwner            #STR
-S3_LOGGING.OutputFormat           #STR
-S3_LOGGING.Prefix                 #STR
-
+PIPE.Source                       #STR
 PIPE.SourceParameters             #PIPE_SRC
 PIPE_SRC.FilterCriteria           #STR
  .Filters[*].Pattern              #Cannot use:
                                   #  - FILTER.anything-but FILTER2
                                   #  - FILTER.wildcard
+
+PIPE.Target                       #STR
+PIPE.TargetParameters             #PIPE_DEST
+PIPE_DEST.InputTemplate           #STR
+
+PIPE.Enrichment                   #STR
+PIPE.EnrichmentParameters         #ENRICH
+ENRICH.InputTemplate              #STR
+ENRICH.HttpParameters             #HTTP_TARGET (same as EventBridge Rules???)
 
 PIPE_SRC.SqsQueueParameters       #PIPE_SRC_SQS
 PIPE_SRC_SQS.BatchSize            #NUM
@@ -1055,9 +1059,6 @@ PIPE_SRC
 PIPE_SRC.RabbitMQBrokerParameters #
 PIPE_SRC
  .SelfManagedKafkaParameters      #
-
-PIPE.TargetParameters             #PIPE_DEST
-PIPE_DEST.InputTemplate           #STR
 
 PIPE_DEST.LambdaFunctionParameters
  .InvocationType                  #STR
@@ -1156,6 +1157,25 @@ DeletePipe()                      #  - only Name
                                   #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
                                   #  - no Enrichment, Source, StateReason, Target
                                   #  - no Tags
+
+                                  ┌─────────────┐
+                                  │   LOGGING   │
+                                  └─────────────┘
+
+PIPE.LogConfiguration             #LOGGING
+LOGGING.Level                     #STR
+LOGGING.IncludeExecutionData      #STR_ARR (more info with CreatePipe())
+LOGGING
+ .CloudwatchLogsLogDestination
+ .LogGroupArn                     #STR
+LOGGING.FirehoseLogDestination
+ .DeliveryStreamArn               #STR
+
+LOGGING.S3LogDestination          #S3_LOGGING
+S3_LOGGING.BucketName             #STR
+S3_LOGGING.BucketOwner            #STR
+S3_LOGGING.OutputFormat           #STR
+S3_LOGGING.Prefix                 #STR
 
                                   ┌──────────┐
                                   │   TAGS   │
@@ -1322,6 +1342,18 @@ DeleteSchedule()                  #  - only Name, GroupName
                                   #  - only ClientToken
                                   #Res: empty
 
+                                  ┌───────────┐
+                                  │   BASIC   │
+                                  └───────────┘
+
+RULE.ScheduleExpression           #STR. Part of EventBridge Rules (see its doc), not Scheduler
+                                  #Has fewer features
+                                  #Calls TARGET at specific times, with event GEVENT
+                                  #Can be:
+                                  #  - 'cron(...)'
+                                  #  - 'rate(...)'
+                                  #Max 256 chars
+
                                   ┌──────────┐
                                   │   TAGS   │
                                   └──────────┘
@@ -1479,14 +1511,16 @@ DeleteSchemaVersion()             #Res: empty
                                   │   DISCOVERER   │
                                   └────────────────┘
 
-DISCOVERER                        #
+DISCOVERER                        #Create|infer SCHEMAs from EVENTs
                                   #Not if BUS.KmsKeyIdentifier set
 DISCOVERER.DiscovererArn          #'DISCOVERER_ARN'. 'arn:aws:schemas:REGION:ACCOUNT_ID:discoverer/DISCOVERER_MID'
 DISCOVERER.DiscovererId           #'DISCOVERER_MID'
-DISCOVERER.CrossAccount           #BOOL
 DISCOVERER.Description            #STR
-DISCOVERER.SourceArn              #STR
+
 DISCOVERER.State                  #STR
+
+DISCOVERER.SourceArn              #STR
+DISCOVERER.CrossAccount           #BOOL
 
                                   ┌────────────────────┐
                                   │   DISCOVERER API   │
