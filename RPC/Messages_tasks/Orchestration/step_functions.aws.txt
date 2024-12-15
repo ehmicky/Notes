@@ -6,17 +6,8 @@
 VERSION ==>                       #2024-11-28
 
 TODO:
-  - https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html
-     - already done:
-        - Logging and monitoring
-        - Testing and debugging > Step Functions local
-        - Best practices:
-           - Handle transient Lambda service exceptions
-        - Service quotas
-     - not done:
-        - Workshops and tutorials
-           - except: Create a state machine using AWS SAM
-  - https://aws.amazon.com/step-functions/faqs
+  - https://docs.aws.amazon.com/step-functions/latest/dg/learning-resources.html
+     - stopped at: Examine executions
   - search GitHub for related projects
   - move the SQS, SNS, etc. docs to their doc, under "... step functions" chapter
   - add summary
@@ -382,6 +373,8 @@ NEW_VERSION.publish               #BOOL (def: false). Calls PublishStateMachineV
 
 VERSION.revisionId                #'REVISION_ID' (see aws_network doc)
                                   #Is 'INITIAL' after create, before first update
+                                  #Each MACHINE update creates a new private one
+                                  #PublishStateMachineVersion() makes it public
 
 EVENT_INFO.stateMachineVersionArn #'VERSION_ARN'
                                   #With EVENT_TYPE ExecutionStarted
@@ -549,9 +542,9 @@ ALIAS_DEPLOY                      #Alternative to ALIAS_ROUTING, which automates
 ALIAS_DEPLOY
  .StateMachineVersionArn          #'VERSION_ARN'
 ALIAS_DEPLOY.Type                 #How many increments to shift traffic:
-                                  #  - 'ALL_AT_ONCE': 1
+                                  #  - 'ALL_AT_ONCE' ("blue/green"): 1
                                   #  - 'CANARY': 2
-                                  #  - 'LINEAR': multiple
+                                  #  - 'LINEAR' ("rolling"): multiple
 ALIAS_DEPLOY.Interval             #NUM (max 35h) of minutes between 2 increments
 ALIAS_DEPLOY.Percentage           #1-99 percentage of traffic increase with each increment (except last one)
 ALIAS_DEPLOY.Alarms               #CloudWatch 'ALARM'_ARR. Rollback if any has StateValue 'ALARM'
@@ -579,7 +572,20 @@ AWS::Serverless::StateMachine     #Includes RESPROPs:
                                   └─────────────┘
 
 MACHINE.type                      #Either 'STANDARD' (def) or 'EXPRESS'
+
 DMAP_CONF.ExecutionType           #Same but for child MACHINE
+
+RECOMMENDATION ==>                #Pros:
+                                  #  - cheaper when STEPs are fast and use low memory
+                                  #  - more scalable when lots of EXECs|STATE_EXECs
+                                  #Cons:
+                                  #  - fewer features
+                                  #  - 5m timeout
+                                  #  - must be idempotent
+                                  #I.e. best for EXECs that are short, fast and|or used a lot
+                                  #Can use ITEM_EXECs or OPTIMIZED_NESTED_EXEC to:
+                                  #  - keep parent as STANDARD
+                                  #  - make specific parts of it as EXPRESS
 
 EXCLUSIVE FEATURES ==>            #Different pricing (see above), usually cheaper
                                   #  - including EXEC_BILLING and AWS/States/Express* METRICs
@@ -593,6 +599,10 @@ MISSING FEATURES ==>              #Retrieve EXEC, i.e.:
                                   #  - DescribeStateMachineForExecution(), ListExecutions()
                                   #  - DescribeExecution(): except for ITEM_EXEC
                                   #StopExecution()
+                                  #Logic must be idempotent because:
+                                  #  - creating an EXEC is not idempotent
+                                  #  - EXEC is sometimes run twice (at-least-once guarantee)
+                                  #Def|max DMACHINE.TimeoutSeconds: only 5m
                                   #DMAP_CONF.Mode 'DISTRIBUTED'
                                   #EVENT
                                   #ACTIVITY_TASK
@@ -604,9 +614,7 @@ MISSING FEATURES ==>              #Retrieve EXEC, i.e.:
                                   #     - however, already successful STATEs in a failed ITER are re-run
                                   #  - no ITEM_EXEC.redriveDate nor CONTEXT.Execution.RedriveCount
 
-DIFFERENCES ==>                   #Creating an EXEC is not idempotent
-                                  #Def|max DMACHINE.TimeoutSeconds: 5m
-                                  #Def MACHINE_LOGGING.level 'ALL'
+DIFFERENCES ==>                   #Def MACHINE_LOGGING.level 'ALL'
 
 EXEC_ARN                          #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE:EXEC:EXPRESS_MID'
 ITEM_EXEC_ARN                     #'arn:aws:states:REGION:ACCOUNT_ID:express:MACHINE/STATE_MAP_LABEL:EXEC:EXPRESS_MID'
@@ -1002,6 +1010,7 @@ EVENTS_REQ.executionArn           #'[ITEM_]EXEC_ARN'
 
 EVENT                             #Part of an EXEC, mostly lifecycle of STATEs
                                   #Max 2.5e4 EVENTs per [ITEM_]EXEC
+                                  #  - i.e. using ITEM_EXECs can help avoid limit in parent EXEC
                                   #Only for last 90 days
 EVENT.id                          #EVENT_MID. Serial NUM
                                   #Initial implied EVENT_MID is 0
@@ -1043,8 +1052,8 @@ ICMACHINE.grantRead(YGRANTABLE)
 
 TEST_IN                           #Executes a single STATE, for debugging purpose
                                   #Does not support:
-                                  #  - STATE_MAP, STATE_PARALLEL
-                                  #  - ACTIVITY
+                                  #  - STATE_MAP|PARALLEL
+                                  #  - ACTIVITY_TASK
                                   #  - ASYNC_TASK
                                   #  - JOB_TASK
 
@@ -1101,7 +1110,6 @@ DSTATE.InputPath                 $#DSEXPR. Transforms INPUT
                                  $#Not with STATE_FAIL
 DSTATE.Parameters                $#DOEXPR. Transforms INPUT
                                  $#Done after InputPath
-                                 $#Throws 'States.ParameterPathFailure' if some DSEXPR does not match
                                  $#Only with STATE_TASK|PARALLEL|PASS
 TEST_DATA
  .afterInputPath|afterParameters $#'INPUT_JSON' after DSTATE.InputPath|Parameters
@@ -1425,7 +1433,7 @@ DSTATE.Type                       #'Choice'. STATE is STATE_CHOICE
                                   #Like a `switch` statement
 
 DSTATE_CHOICE.Default             #'STATE'
-                                  #Def: throw 'States.NoChoiceMatched'
+                                  #Def: throw 'States.Runtime'
 
 DSTATE_CHOICE.Choices             #DCHOICE_ARR
                                   #Cannot be empty
@@ -1586,11 +1594,14 @@ CSTATE_FAIL_OPTS.error|cause      #DSTATE_FAIL.*
 
 DMACHINE.TimeoutSeconds           #NUM (def|max: 1y). Timeout for an EXEC
                                   #After NUMs, throw 'States.Timeout'
+                                  #Recommended: should be explicitly set
                                   #With TEST_IN: always 5m
-                                  #With HTTP_TASK: def|max 1m
-                                  #With ACTIVITY_TASK: starts once ACTIVITY_TASK_GET completed
                                   #Only for top-level MACHINE
 DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 1m, max: 1y). Same but on STATE_TASK
+                                  #With HTTP_TASK:
+                                  #  - def|max 1m
+                                  #  - throws 'States.Http.Socket' instead
+                                  #With ACTIVITY_TASK: starts once ACTIVITY_TASK_GET completed
 
 EXEC.status                       #Can be 'TIMED_OUT'
 
@@ -2085,28 +2096,36 @@ DescribeExecution()
 StopExecution()
 GetExecutionHistory()             #Can operate on ITEM_EXECs by specifying an ITEM_EXEC_ARN
 
-                                  ┌────────────────┐
-                                  │   MAP CONFIG   │
-                                  └────────────────┘
+                                  ┌──────────────┐
+                                  │   MAP MODE   │
+                                  └──────────────┘
 
 DMACHINE.ProcessorConfig.Mode     #DMAP_CONF
                                   #Only on a child MACHINE inside DSTATE_MAP.ItemProcessor
-DMAP_CONF.Mode                    #Either:
-                                  #  - 'DISTRIBUTED'
-                                  #  - 'INLINE' (def):
-                                  #      - pros:
-                                  #         - initial STATE for each ITER is free
-                                  #         - can reference upper scope's DVARs (see above)
-                                  #         - does not require additional PACTIONs (see above)
-                                  #      - cons:
-                                  #         - max 40 ITEMs
-                                  #         - no BATCH
-                                  #         - no DREADER|DWRITER
-                                  #         - no MAP_RUN nor ITEM_EXEC
-                                  #            - i.e. its EVENTs are included in the max 2.5e4 quota of parent EXEC
-                                  #         - no DMAP_CONF.ExecutionType
-                                  #         - no DMAP_CONF.ToleratedFailure*
-                                  #         - no STATE_MAP_LABEL|STATE_MAP_ARN
+DMAP_CONF.Mode                    #Either 'INLINE' (def) or 'DISTRIBUTED'
+
+INLINE EXCLUSIVE FEATURES ==>     #Initial STATE for each ITER is free
+                                  #Can reference upper scope's DVARs (see above)
+                                  #Does not require additional PACTIONs states:*Execution (see above)
+
+INLINE MISSING FEATURES ==>       #Max 40 ITEMs
+                                  #BATCH
+                                  #DREADER|DWRITER
+                                  #MAP_RUN and ITEM_EXEC
+                                  #  - i.e. its EVENTs are included in the max 2.5e4 quota of parent EXEC
+                                  #DMAP_CONF.ExecutionType
+                                  #DMAP_CONF.ToleratedFailure*
+                                  #STATE_MAP_LABEL|STATE_MAP_ARN
+
+                                  ┌──────────────────┐
+                                  │   MAP MODE IAC   │
+                                  └──────────────────┘
+
+new [Distributed]Map(...)         #DMAP_CONF.Mode is 'INLINE|DISTRIBUTED' depending on whether 'Distributed'
+
+                                  ┌────────────────┐
+                                  │   MAP CONFIG   │
+                                  └────────────────┘
 
 MAP_RUN|DSTATE_MAP.MaxConcurrency #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACHINEs to run at once
                                   #Can be 1 for serial
@@ -2124,7 +2143,6 @@ MAP_RUN|DSTATE_MAP
                                   │   MAP CONFIG IAC   │
                                   └────────────────────┘
 
-new [Distributed]Map(...)         #DMAP_CONF.Mode is 'INLINE|DISTRIBUTED' depending on whether 'Distributed'
 CSTATE_MAP_OPTS.maxConcurrency
  |toleratedFailurePercentage
  |toleratedFailureCount           #DSTATE_MAP.*
@@ -2328,7 +2346,7 @@ CSTATE_WAIT_OPTS.time             #DPASS.Timestamp|Seconds, either:
 DSTATE.Type                       #'Task'. STATE is STATE_TASK
                                   #On error, throws:
                                   #  - 'States.Permissions': auth-related
-                                  #  - 'States.TaskFailed': else
+                                  #  - 'States.TaskFailed': else (except 'States.Timeout')
 
 DSTATE_TASK.Resource              #'ARN'. Available ones documented below
                                   #Must be in same REGION
@@ -2460,20 +2478,20 @@ ERROR_OUTPUT.error                #'States.Http.StatusCode.4**|5**'
 
 TEST_DATA.request                 #TEST_REQ
 TEST_REQ.url                      #'URL'
-TEST_REQ.protocol                 #STR
+TEST_REQ.protocol                 #'http[s]'
 TEST_REQ.method                   #'HTTP_METHOD'
 TEST_REQ.headers                  #'HEADERS_OBJ'
 TEST_REQ.body                     #'VAL'
 
 TEST_DATA.response                #TEST_RES
-TEST_RES.protocol                 #STR
+TEST_RES.protocol                 #'http[s]'
 TEST_RES.statusCode               #'STATUS_NUM'
 TEST_RES.statusMessage            #'STATUS'
 TEST_RES.headers                  #'HEADERS_OBJ'
 TEST_RES.body                     #'VAL'
 
-TEST_IN.revealSecrets             #BOOL. If false (def), HTTP_TASK fails if TEST_IN.inspectionLevel 'TRACE'
-                                  #I.e. prevents leaking credentials with TEST_DATA.request|response
+TEST_IN.revealSecrets             #BOOL. If false (def), HTTP_TASK omits credentials in TEST_DATA.request|response
+                                  #I.e. only if TEST_IN.inspectionLevel 'TRACE'
 
                                   ┌──────────────────┐
                                   │   TASK HTTP UI   │
@@ -2993,7 +3011,7 @@ OPTS.headers|queryParameters
                                   └─────────────────────────┘
 
 states:startExecution             #OPTIMIZED_SERVICE_TASK that calls StartExecution()
-                                  #Nested EXEC, but as a top-level EXEC
+                                  #OPTIMIZED_NESTED_EXEC. Nested EXEC, but as a top-level EXEC
                                   #Difference from child MACHINEs (and their ITEM_EXECs):
                                   #  - MACHINEs and EXECs are completely separate
                                   #  - meant for re-using sub-MACHINEs as components
@@ -3029,7 +3047,7 @@ PACTION events:PutTargets|PutRule #If JOB_TASK, must be allowed for MACHINE.role
                                   │   TASK SERVICE NESTED IAC   │
                                   └─────────────────────────────┘
 
-new StepFunctionsStartExecution   #CSTATE_TASK for states:startExecution OPTIMIZED_SERVICE_TASK
+new StepFunctionsStartExecution   #CSTATE_TASK for OPTIMIZED_NESTED_EXEC
  (...CARGS, OPTS)->CNESTED_TASK   #Automatically allows PACTIONs as described above
 
 OPTS.*                            #CSTATE_TASK_OPTS.*
@@ -3151,6 +3169,11 @@ ACTIVITY_TASK_GET                 #Get an ACTIVITY_TASK, i.e. TASK started|ended
 ACTIVITY_TASK_GET.activityArn     #'ACTIVITY_ARN'
 
 ACTIVITY_TASK_GET.workerName      #'ACTIVITY_WORKER'. Only used for logging purpose, with EVENT_INFO.workerName
+
+MULTITHREADING ==>                #When API initiates responding with ACTIVITY_TASK, a network error might prevent it from completing
+                                  #When this happens, GetActivityTask() long poll continues until 1m timeout
+                                  #I.e. for better performance, it is recommended to have many parallel calls GetActivityTask() at once
+                                  #  - so that the above only happens to a small percentage of the ongoing pollers
 
 EVENT_TYPE ActivityScheduled      #
 EVENT_INFO.resource               #'ACTIVITY_ARN'
@@ -3341,9 +3364,9 @@ StepFunctionsCallbackPolicy       #SAM POLICY_TEMPLATE (see its doc) that allows
                                   └────────────────────┘
 
 DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
-                                  #On timeout, throws both:
-                                  #  - 'States.HeartbeatTimeout'
-                                  #  - also 'States.Timeout': see above for related EVENTs and METRICs
+                                  #On timeout, throws 'States.Timeout'
+                                  #  - see above for related EVENTs and METRICs
+                                  #DCATCH|DRETRY.ErrorEquals can also catch it using special ERROR_CODE 'States.HeartbeatTimeout'
                                   #Must be < DTASK_TASK.TimeoutSeconds
                                   #Only for ASYNC_TASK
                                   #With ACTIVITY_TASK: starts once ACTIVITY_TASK_GET completed
@@ -3699,7 +3722,7 @@ DFUNC([ARG[_DFEXPR],...])        $#"Intrinsic function"
                                  $#If no DFEXPR, ARG:
                                  $#  - cannot be ARR, OBJ
                                  $#  - if STR, must be '-quoted, and \-escape any ' { } \
-                                 $#On syntax error, throws 'States.IntrinsicFailure'
+                                 $#On syntax error, throws 'States.Runtime'
 
 States.*                         $#Available DFUNCs, among the following
 
@@ -3752,6 +3775,7 @@ JsonPath.objectAt('DFEXPR')      $#Same for OBJ (using a RV)
                                   └──────────┘
 
 TAGS.resourceArn                  #'MACHINE_ARN|ACTIVITY_ARN'
+                                  #For MACHINEs, apply to all VERSIONs
 TAGS.tags
 MACHINE|ACTIVITY.tags             #TAG_PAIRS
 
