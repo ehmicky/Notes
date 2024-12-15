@@ -36,7 +36,6 @@ TODO:
      - Provider() usage of MACHINE
   - cdk-monitoring-constructs
      - check its section in new_services doc
-  - after documenting $$.Execution|State|StateMachine: move CDK doc for it to the right chapter
   - SAM:
      - https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
         - RESPROP Policies: document like AWS::Serverless::Function, i.e. just refer to SAM_POLICIES
@@ -64,6 +63,7 @@ TODO:
            - Redriving state machines
            - Redriving map runs
         - Processing input and output:
+           - Context object
            - Map state input and output fields in Step Functions
         - Logging and monitoring
         - Service quotas
@@ -232,6 +232,9 @@ MACHINE.creationDate              #DATE_NUM
 
 MACHINE.status                    #'ACTIVE' or 'DELETING'
 
+CONTEXT.StateMachine.Id           #'MACHINE_ARN'
+CONTEXT.StateMachine.Name         #'MACHINE'
+
                                   ┌────────────────┐
                                   │   MACHINE UI   │
                                   └────────────────┘
@@ -295,6 +298,9 @@ ICMACHINE.activityName            #'MACHINE'[_STR_TK]
 ICMACHINE.activityArn             #'MACHINE_ARN'[_STR_TK]
 CMACHINE_OPTS.removalPolicy       #Passed to CZRESOURCE.applyRemovalPolicy()
                                   #Def: RemovalPolicy.DESTROY
+
+JsonPath.stateMachineId          $#'$$.StateMachine.Id'
+JsonPath.stateMachineName        $#'$$.StateMachine.Name'
 
                                   ┌──────────────────────┐
                                   │   MACHINE COMPOSER   │
@@ -579,8 +585,10 @@ MISSING FEATURES ==>              #DescribeStateMachineForExecution(), ListExecu
                                   #  - not for top-level EXECs: no RedriveExecution()
                                   #  - but can re-run failed ITERs by passing STATE_MAP_ARN to StartExecution()
                                   #     - however, already successful STATEs in a failed ITER are re-run
-                                  #  - no ITEM_EXEC.redriveDate
+                                  #  - no ITEM_EXEC.redriveDate nor CONTEXT.Execution.RedriveCount
                                   #ACTIVITY_TASK
+                                  #ASYNC_TASK
+                                  #JOB_TASK
 
 DIFFERENCES ==>                   #Creating an EXEC is not idempotent
                                   #Def|max DMACHINE.TimeoutSeconds: 5m
@@ -773,7 +781,11 @@ EXEC.status                       #One of:
                                   #  - SUCCEEDED
                                   #  - FAILED
                                   #  - TIMED_OUT
-                                  #  - ABORTED: StopExecution()
+                                  #  - ABORTED
+
+CONTEXT.Execution.Id              #'EXEC_ARN'
+CONTEXT.Execution.Name            #'EXEC'
+CONTEXT.Execution.StartTime       #EXEC.startDate, as 'DATE'
 
 EVENT_TYPE ExecutionStarted
 EVENT_TYPE ExecutionSucceeded
@@ -822,6 +834,10 @@ StopExecution()                   #Req: [ITEM_]EXEC
                                   ┌───────────────────┐
                                   │   EXECUTION IAC   │
                                   └───────────────────┘
+
+JsonPath.executionId             $#'$$.Execution.Id'
+JsonPath.executionName           $#'$$.Execution.Name'
+JsonPath.executionStartTime      $#'$$.Execution.StartTime'
 
 ICMACHINE.grantExecution
  (YGRANTABLE, 'PACTION',...)      #Allows PACTION on any EXEC in this MACHINE
@@ -935,7 +951,7 @@ TEST_IN                           #Executes a single STATE, for debugging purpos
                                   #  - STATE_MAP, STATE_PARALLEL
                                   #  - ACTIVITY
                                   #  - ASYNC_TASK
-                                  #  - SERVICE_SYNC_TASK
+                                  #  - JOB_TASK
 
 TEST_IN.inspectionLevel           #Fields to omit in TEST_OUT.*. One of:
                                   #  - 'TRACE': none
@@ -994,6 +1010,8 @@ DSTATE.Parameters                $#DOEXPR. Transforms INPUT
 TEST_DATA
  .afterInputPath|afterParameters $#'INPUT_JSON' after DSTATE.InputPath|Parameters
 
+CONTEXT.Execution.Input           #INPUT OBJ
+
 EVENT_INFO.input                  #'INPUT_JSON'
                                   #With EVENT_TYPEs:
                                   #  - ExecutionStarted
@@ -1006,11 +1024,13 @@ EVENTS_REQ.includeExecutionData   #BOOL (def: true). If false, do not set EVENT_
                                   │   INPUT IAC   │
                                   └───────────────┘
 
-CSTATE_OPTS.inputPath             #DSTATE.InputPath
-                                  #Not supported yet for STATE_WAIT
-CSTATE_OPTS.parameters            #DSTATE.Parameters
+CSTATE_OPTS.inputPath            $#DSTATE.InputPath
+                                 $#Not supported yet for STATE_WAIT
+CSTATE_OPTS.parameters           $#DSTATE.Parameters
 
-JsonPath.DISCARD                  #null, for its special meaning with DSTATE.InputPath|ResultPath|OutputPath
+JsonPath.DISCARD                 $#null, for its special meaning with DSTATE.InputPath|ResultPath|OutputPath
+
+JsonPath.executionInput          $#'$$.Execution.Input'
 
                                   ┌────────────┐
                                   │   OUTPUT   │
@@ -1064,10 +1084,10 @@ EVENTS_REQ.includeExecutionData   #BOOL (def: true). If false, do not set EVENT_
                                   └────────────────┘
 
 CSTATE_OPTS
- .resultSelector|resultPath       #DSTATE.*
+ .resultSelector|resultPath      $#DSTATE.*
 
-CSTATE_OPTS.outputPath            #DSTATE.OutputPath
-                                  #Not supported yet for STATE_WAIT
+CSTATE_OPTS.outputPath           $#DSTATE.OutputPath
+                                 $#Not supported yet for STATE_WAIT
 
                                   ┌─────────────┐
                                   │   CONTEXT   │
@@ -1083,14 +1103,9 @@ $$...                            $#Like $... but root value is CONTEXT instead
                                   │   CONTEXT IAC   │
                                   └─────────────────┘
 
-JsonPath|Context.entireContext    #'$$'
+JsonPath|Context.entireContext   $#'$$'
 
-Context.stringAt('$$...')         #'DSEXPR' starting with '$$'
-
-JsonPath.execution*               #'$$.Execution.*'
-                                  #'$$.Execution.Redrive*' not supported yet
-JsonPath.state*                   #'$$.State.*'
-JsonPath.stateMachine*            #'$$.StateMachine.*'
+Context.stringAt('$$...')        $#'DSEXPR' starting with '$$'
 
                                   ┌───────────────┐
                                   │   VARIABLES   │
@@ -1138,6 +1153,8 @@ DMACHINE.States.STATE             #DSTATE. Like `case` in a `switch` statement
                                   #'STATE' name max 80 chars
                                   #Required
 
+CONTEXT.State.Name                #'STATE'
+
 DSTATE.Type                       #'STATE_TYPE'. Required
 DSTATE_*.*                        #STATE_TYPE-specific, e.g. DSTATE_CHOICE.Default
 
@@ -1159,6 +1176,8 @@ CSTATE.stateId
 CSTATE_OPTS.stateName             #'STATE' (def: 'CONSTRUCT' name)
 
 CSTATE_OPTS.comment               #DSTATE.Comment
+
+JsonPath.stateName               $#'$$.State.Name'
 
 CSTATE.toStateJson                #Can be overridden as a workaround to set some DSTATE.* not supported yet by CDK
                                   #Must `extend` from the specific class (e.g. `Succeed`)
@@ -1200,6 +1219,8 @@ DSTATE.End                        #BOOL (def: false). If true, same as using DST
                                   #Not with STATE_CHOICE|SUCCEED|FAIL
                                   #Together with STATE_SUCCEED|FAIL, called "terminal STATE" (of a MACHINE)
 
+CONTEXT.State.EnteredTime         #'DATE' on STATE start
+
 EVENT_TYPE STATE_TYPEStateEntered #On STATE start
 EVENT_TYPE STATE_TYPEStateExited  #On STATE success
                                   #Not with STATE_FAIL
@@ -1217,6 +1238,8 @@ STATE_EXEC                        #Starting executing a STATE
 
 new Succeed
  (...CARGS[, CSTATE_SUCCEED_OPTS])#CSTATE_SUCCEED
+
+JsonPath.stateEnteredTime        $#'$$.State.EnteredTime'
 
 CTREE                             #Tree of CSTATEs
                                   #Starts with 1 CSTATE and end with 1|n CTREEs
@@ -1384,17 +1407,18 @@ DCOND.TimestampLess
                                   │   CONDITION IAC   │
                                   └───────────────────┘
 
-Condition.*                       #DCOND
+Condition.*                      $#DCOND
 
-Condition.not(CCOND)->CCOND2      #
+Condition.not(CCOND)->CCOND2     $#
 Condition.and|or(CCOND,...)
- ->CCOND2                         #
+ ->CCOND2                        $#
 
-Condition.is[Not]*(CSEXPR)->CCOND #
+Condition.is[Not]*(CSEXPR)
+ ->CCOND                         $#
 Condition.*Equals|Than
- (CSEXPR, VAL)->CCOND             #
+ (CSEXPR, VAL)->CCOND            $#
 Condition.stringMatches
- (CSEXPR, STR)->CCOND             #
+ (CSEXPR, STR)->CCOND            $#
 
                                   ┌───────────┐
                                   │   ERROR   │
@@ -1414,6 +1438,11 @@ ERROR_OUTPUT.Cause                #'MESSAGE'. Can be undefined
 
 EXEC|TEST_OUT|ASYNC_TASK_FAILURE
  .error|cause                     #ERROR_OUTPUT.*
+
+ABORTING ==>                      #Stops ongoing STATEs. Happens with:
+                                  #  - StopExecution()
+                                  #  - sibling STATE_PARALLEL branch fails
+                                  #  - STATE_MAP ITEM fails (see DSTATE_MAP.ToleratedFailure* below)
 
 EVENT_INFO.error|cause            #ERROR_OUTPUT.*
                                   #With EVENT_TYPEs:
@@ -1455,7 +1484,7 @@ DMACHINE.TimeoutSeconds           #NUM (def|max: 1y). Timeout for an EXEC
                                   #After NUMs, throw ERROR_CODE 'States.Timeout'
                                   #With TEST_IN: always 5m
                                   #Only for top-level MACHINE
-DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def|max: 60). Same but on STATE_TASK
+DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def: 1m, max: 1y). Same but on STATE_TASK
 
 EXEC.status                       #Can be 'TIMED_OUT'
 
@@ -1542,7 +1571,7 @@ CSTATE.addCatch
 CCATCH_OPTS.errors                #DCATCH.ErrorEquals (def: ['States.ALL'])
                                   #'States.ALL' always sorted to be at the end
 
-CCATCH_OPTS.resultPath            #DCATCH.ResultPath
+CCATCH_OPTS.resultPath           $#DCATCH.ResultPath
 
                                   ┌───────────┐
                                   │   RETRY   │
@@ -1565,6 +1594,8 @@ DRETRY.JitterStrategy             #'NONE' (def) or 'FULL'. Applies random jitter
 DRETRY.MaxDelaySeconds            #NUM (def: none). Max delay
                                   #If reached, continues to retry, but with this delay
 
+CONTEXT.State.RetryCount          #NUM of ongoing retries
+
                                   ┌───────────────┐
                                   │   RETRY IAC   │
                                   └───────────────┘
@@ -1578,6 +1609,8 @@ CRETRY_OPTS.errors                #DRETRY.ErrorEquals (def: ['States.ALL'])
 CRETRY_OPTS.maxAttempts
  |backoffRate|jitterStrategy      #DRETRY.*
 CRETRY_OPTS.interval|maxDelay     #DURATION. DRETRY.*
+
+JsonPath.stateRetryCount         $#'$$.State.RetryCount'
 
                                   ┌─────────────────┐
                                   │   REDRIVE TOP   │
@@ -1610,6 +1643,9 @@ ITEM_EXEC.status                  #Is 'PENDING_REDRIVE' when waiting due to MAP_
 MAP_COUNT.pendingRedrive          #NUM waiting to REDRIVE
 MAP_COUNT.failuresNotRedrivable   #NUM that tried to REDRIVE but could not
 
+CONTEXT.Execution.RedriveCount    #EXEC.redriveCount
+CONTEXT.Execution.RedriveTime     #EXEC.redriveData, as 'DATE'
+
 EVENT_TYPE ExecutionRedriven      #On REDRIVE
 EVENT_INFO.redriveCount           #EXEC.redriveCount
                                   #With EVENT_TYPE ExecutionRedriven
@@ -1621,6 +1657,12 @@ EVENT_INFO.redriveCount           #EXEC.redriveCount
 RedriveExecution()                #Req: REDRIVE
                                   #Res: EXEC
                                   #  - only redriveDate
+
+                                  ┌─────────────────────┐
+                                  │   REDRIVE TOP IAC   │
+                                  └─────────────────────┘
+
+CDK ==>                          $#Does not support '$$.Execution.Redrive*' yet
 
                                   ┌─────────────────────────┐
                                   │   REDRIVE TOP METRICS   │
@@ -1675,12 +1717,12 @@ DSTATE_PASS.Result               $#OUTPUT (def: INPUT). Sets OUTPUT
 new Pass
  (...CARGS[, CSTATE_PASS_OPTS])   #CSTATE_PASS
 
-CSTATE_PASS_OPTS.result           #DSTATE_PASS.Result, among:
-                                  #  - Result.fromString(STR)
-                                  #  - Result.fromNumber(NUM)
-                                  #  - Result.fromBoolean(BOOL)
-                                  #  - Result.fromObject(OBJ)
-                                  #  - Result.fromArray(ARR)
+CSTATE_PASS_OPTS.result          $#DSTATE_PASS.Result, among:
+                                 $#  - Result.fromString(STR)
+                                 $#  - Result.fromNumber(NUM)
+                                 $#  - Result.fromBoolean(BOOL)
+                                 $#  - Result.fromObject(OBJ)
+                                 $#  - Result.fromArray(ARR)
 
                                   ┌───────────────┐
                                   │   PASS LINT   │
@@ -1835,8 +1877,9 @@ DSTATE_MAP.**                     #In any DZEXPR|DOEXPR, does not use ITEM_ARR, 
 
 CSTATE_MAP.itemProcessor(CTREE)
  ->CSTATE_MAP                     #DSTATE_MAP.ItemProcessor
-CSTATE_MAP_OPTS
- .itemsPath|itemSelector          #DSTATE_MAP.*
+
+CSTATE_MAP_OPTS.itemsPath        $#DSTATE_MAP.ItemsPath
+CSTATE_MAP_OPTS.itemSelector      #DSTATE_MAP.ItemSelector
 
                                   ┌─────────────┐
                                   │   MAP RUN   │
@@ -1950,7 +1993,7 @@ MAP_RUN|DSTATE_MAP.MaxConcurrency #NUM[_DZEXPR] (def: 0, i.e. unlimited) of MACH
                                   #Can be 1 for serial
 
 MAP_RUN|DSTATE_MAP                #When > NUM[_DZEXPR] (def: 0) ITEMs throw:
- .ToleratedFailureCount           #  - abort every child MACHINE
+ .ToleratedFailureCount           #  - abort every ITEM (i.e. its child MACHINE)
                                   #  - make DSTATE_MAP throw ERROR_CODE 'States.ExceedToleratedFailureThreshold'
                                   #Else, ITEMs that throw:
                                   #  - do not make parent MACHINE throw
@@ -2141,6 +2184,7 @@ OPTS.prefix                       #DWRITER_PARAMS.Prefix
 
 DSTATE.Type                       #'Wait'. STATE is STATE_WAIT
                                   #Wait for a specific duration
+                                  #For more complex wait logic, see JOB_TASK and ASYNC_TASK
 
 DSTATE_WAIT.Timestamp             #'DATE'[_DZEXPR]
                                   #If in the past, no wait
@@ -2200,6 +2244,8 @@ DSTATE_TASK.Credentials.RoleArn   #'ROLE_ARN'[_DZEXPR] assumed by MACHINE.roleAr
 EVENT_INFO.taskCredentials.roleArn#'ROLE_ARN'
                                   #With EVENT_TYPEs LambdaFunctionScheduled and TaskScheduled
 
+CONTEXT.Execution.RoleArn         #MACHINE.roleArn or DSTATE_TASK.Credentials.RoleArn
+
                                   ┌───────────────────┐
                                   │   TASK MAIN IAC   │
                                   └───────────────────┘
@@ -2219,6 +2265,8 @@ CSTATE_TASK_OPTS.credentials.role #DSTATE_TASK.Credentials.RoleArn
                                   #Allows MACHINE.roleArn to assume it
                                   #  - if a DZEXPR was passed: allows MACHINE.roleArn to assume any ROLE instead,
                                   #    not just Credentials.RoleArn ROLE_ARN
+
+JsonPath.executionRoleArn        $#'$$.Execution.RoleArn'
 
                                   ┌───────────────────────────┐
                                   │   TASK MAIN METRICS IAC   │
@@ -2328,7 +2376,8 @@ TaskInput.from*(VAL)              #CTASK_INPUT. Just wraps its argument as is
                                   #Used as a type for some SERVICE_TASK's INPUT.* values
 TaskInput.fromText(STR)           #
 TaskInput.fromObject(OBJ)         #
-TaskInput.fromJsonPathAt('DFEXPR')#
+TaskInput.fromJsonPathAt
+ ('DFEXPR')                      $#
 
                                   ┌───────────────────────────┐
                                   │   TASK SERVICE COMPOSER   │
@@ -2365,7 +2414,7 @@ DVAR ServiceIntegrationResourceArn#DSTATE_TASK.Resource. With AWS/States/Service
 
 lambda:invoke                     #SERVICE_TASK_ACTION calling Invoke()
                                   #Cannot use INVOCATION_RES.LogResult, InvokeWithResponseStream()
-                                  #Can use SERVICE_TASK_PATTERN waitForTaskToken
+                                  #Can be ASYNC_TASK but not JOB_TASK
 
 INPUT.FunctionName                #'FUNC_ARN' of INVOCATION_REQ.FunctionArn
 INPUT.Qualifier                   #'QUALIFIER' of INVOCATION_REQ.FunctionArn
@@ -2446,6 +2495,12 @@ CLAMBDA_TASK.metric
 CLAMBDA_TASK.metricMETRIC         #Same except 'METRIC' omits 'LambdaFunction' prefix, e.g. CLAMBDA_TASK.metricRunTime()
  ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
 
+                                  ┌──────────────┐
+                                  │   TASK SQS   │
+                                  └──────────────┘
+
+sqs:???                           #Can be ASYNC_TASK but not JOB_TASK
+
                                   ┌──────────────────┐
                                   │   TASK SQS SAM   │
                                   └──────────────────┘
@@ -2457,6 +2512,24 @@ AWS::Serverless::Connector        #Can be used with:
                                   #Transformed to a MPOLICY on 'ROLE':
                                   #  - allowing sqs:SendMessage
                                   #  - on QUEUE
+
+                                  ┌──────────────┐
+                                  │   TASK SNS   │
+                                  └──────────────┘
+
+sns:???                           #Can be ASYNC_TASK but not JOB_TASK
+
+                                  ┌──────────────────────┐
+                                  │   TASK API GATEWAY   │
+                                  └──────────────────────┘
+
+apigateway:???                    #Can be neither ASYNC_TASK nor JOB_TASK
+
+                                  ┌─────────────────────────┐
+                                  │   TASK SERVICE NESTED   │
+                                  └─────────────────────────┘
+
+                                  #Can be ASYNC_TASK or JOB_TASK
 
                                   ┌─────────────────────────────┐
                                   │   TASK SERVICE NESTED SAM   │
@@ -2605,13 +2678,51 @@ CACTIVITY[_TASK].metric
 CACTIVITY[_TASK].metricMETRIC     #Same except 'METRIC' omits 'Activity' prefix, e.g. CACTIVITY[_TASK].metricRunTime()
  ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
 
+                                  ┌──────────────┐
+                                  │   TASK JOB   │
+                                  └──────────────┘
+
+SERVICE_TASK_PATTERN sync         #When used, makes a SERVICE_TASK a "Job pattern" (JOB_TASK)
+                                  #Means the TASK waits for the SERVICE_TASK_ACTION's underlying async logic (JOB) to complete
+                                  #  - polls for completion
+                                  #  - then returns final output
+                                  #  - e.g. with states:StartExecution, uses DescribeExecution()
+                                  #Only with optimized SERVICE_TASK, and only some of them
+                                  #If TASK is aborted, cancels JOB using SERVICE_TASK_ACTION-specific logic
+                                  #  - e.g. with states:StartExecution, with StopExecution()
+
+StepFunctionsGetEventsFor...Rule  #EventBridge RULE automatically created by JOB_TASK as a complement to polling
+                                  #Allows faster reaction to completion than polling
+                                  #Only for specific SERVICE_TASK_ACTIONs
+                                  #Not if cross-ACCOUNT
+                                  #Documented in each service
+
+EVENT_TYPE *Scheduled|*Started    #When JOB_TASK starts
+EVENT_TYPE *Submitted             #When JOB starts
+
+                                  ┌───────────────────┐
+                                  │   TASK JOB AUTH   │
+                                  └───────────────────┘
+
+PACTIONS ==>                      #MACHINE.roleArn must be allowed additional SERVICE_TASK_ACTION-specific PACTIONs to:
+                                  #  - start the JOB
+                                  #  - poll for JOB completion
+                                  #  - cancel the JOB
+                                  #Documented in each service
+
+PACTION events:PutTargets|PutRule
+ |DescribeRule                    #Must be allowed for MACHINE.roleArn on EventBridge RULE 'StepFunctionsGetEventsFor...Rule'
+
                                   ┌────────────────┐
                                   │   TASK ASYNC   │
                                   └────────────────┘
 
 ASYNC_TASK                        #"Callback pattern". TASK that signals TASK's completion manually
                                   #Do so by calling SendTask*()
+                                  #Cannot be cross-ACCOUNT
 ASYNC_TASK_*.taskToken            #'ASYNC_TASK_MID'. To send with SendTask*()
+
+HTTP_TASK                         #Cannot be ASYNC_TASK
 
 SERVICE_TASK_PATTERN              #Make a SERVICE_TASK an ASYNC_TASK
  waitForTaskToken                 #Always wait for SERVICE_TASK_ACTION to complete???
@@ -2620,27 +2731,28 @@ CONTEXT.Task.Token                #'ASYNC_TASK_MID'
 
 ACTIVITY_TASK.taskToken           #'ASYNC_TASK_MID'. ACTIVITY_TASKs are always ASYNC_TASKs
 
+DSTATE_TASK.TimeoutSeconds        #Still applies (see above), i.e. ASYNC_TASK can last max 1y
+
+JOB_TASK                          #Can combine ASYNC_TASK + JOB_TASK by both:
+                                  #  - using SERVICE_TASK_PATTERN sync
+                                  #  - passing CONTEXT.Task.Token as INPUT
+                                  #It behaves like JOB_TASK
+                                  #Except can optionally call sendTask*() to stop polling and signal TASK's completion
+
 EVENT_TYPE *Scheduled             #When ASYNC_TASK starts
 EVENT_TYPE *Started               #When consumer gets the ASYNC_TASK_MID:
                                   #  - SERVICE_TASK: right after *Scheduled
                                   #  - ACTIVITY_TASK: GetActivityTask()
-EVENT_TYPE *StartFailed           #Failure during *Started
-                                  #E.g. GetActivityTask() with wrong credentials
 EVENT_TYPE *Submitted             #When initial consumer logic done:
                                   #  - SERVICE_TASK: SERVICE_TASK_ACTION success
                                   #  - ACTIVITY_TASK: right after *Started
-EVENT_TYPE *SubmitFailed          #Failure during *Submitted
-                                  #E.g. SERVICE_TASK_ACTION failed
-
-SERVICE_TASK_PATTERN sync         #SERVICE_SYNC_TASK, "job pattern"???
 
                                   ┌─────────────────────┐
                                   │   TASK ASYNC AUTH   │
                                   └─────────────────────┘
 
 PACTION states:                   #Must be allowed
- SendTaskSuccess|Failure|Heartbeat#E.g. if SERVICE_TASK_PATTERN waitForTaskToken, the compute instance
-                                  #must be allowed to call SendTask*()
+ SendTaskSuccess|Failure|Heartbeat#E.g. if ASYNC_TASK, the compute instance must be allowed to call SendTask*()
 
                                   ┌────────────────────┐
                                   │   TASK ASYNC API   │
@@ -2661,7 +2773,7 @@ CSTATE_TASK_OPTS                  #SERVICE_TASK_PATTERN among:
                                   #  - 'RUN_JOB': 'sync'
                                   #Cannot be used with CCUSTOM_TASK: must set DSTATE_TASK.Resource using CCUSTOM_TASK._renderTask instead
 
-JsonPath|Context.taskToken        #'$$.Task.Token'
+JsonPath|Context.taskToken       $#'$$.Task.Token'
 
 ICMACHINE.grantTaskResponse
  (YGRANTABLE)->CGRANT             #Allows PACTION 'states:SendTaskSuccess|SendTaskFailure|SendTaskHeartbeat' to MACHINE
@@ -2684,10 +2796,8 @@ DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat 
                                   #  - 'States.HeartbeatTimeout'
                                   #  - also 'States.Timeout': see above for related EVENTs and METRICs
                                   #Must be < DTASK_TASK.TimeoutSeconds
-                                  #Only for:
-                                  #  - ASYNC_TASK
-                                  #     - starts once ACTIVITY_TASK_GET|SERVICE_TASK_ACTION completed
-                                  #  - SERVICE_SYNC_TASK
+                                  #Only for ASYNC_TASK
+                                  #  - starts once ACTIVITY_TASK_GET|SERVICE_TASK_ACTION completed
 
 EVENT_INFO.heartbeatInSeconds     #DSTATE_TASK.HeartbeatSeconds
                                   #With EVENT_TYPEs ActivityScheduled, TaskScheduled
@@ -2955,38 +3065,38 @@ DOEXPR                           $#"Payload template". OBJ where top|nested PROP
                                   │   JSONPATH CDK   │
                                   └──────────────────┘
 
-JsonPath|Data|Context.*           #C*EXPR, to use anywhere 'D*EXPR' is expected
-                                  #Throws on JSONPath syntax error (validation is fairly basic)
-                                  #Are STR_TK, which are resolved to 'D*EXPR'
-                                  #If VAL[_DZEXPR]: must append 'Path' to key
-                                  #  - for DCOND.*: must append 'JsonPath' instead
-                                  #If inside a DOEXPR: must not append '.$', as it automatically done instead
-                                  #Some properties require a specific method:
-                                  #  - DSTATE_WAIT.Seconds: WaitTime.secondsPath(NUM_CZEXPR)
-                                  #  - DSTATE_TASK.Credentials.RoleArn: TaskRole.fromRoleArnJsonPath('ROLE_ARN'_CZEXPR)
-                                  #  - DSTATE_TASK.TimeoutSeconds|HeartbeatSeconds: Timeout.at('DZEXPR')
-                                  #Not supported yet for:
-                                  #  - DBATCH.BatchInput
-                                  #  - DSTATE_PARALLEL.Parameters.*
-                                  #  - DSTATE_MAP.Parameters.* (if DISTRIBUTED)
-                                  #  - DREADER_CONF.MaxItems
+JsonPath|Data|Context.*          $#C*EXPR, to use anywhere 'D*EXPR' is expected
+                                 $#Throws on JSONPath syntax error (validation is fairly basic)
+                                 $#Are STR_TK, which are resolved to 'D*EXPR'
+                                 $#If VAL[_DZEXPR]: must append 'Path' to key
+                                 $#  - for DCOND.*: must append 'JsonPath' instead
+                                 $#If inside a DOEXPR: must not append '.$', as it automatically done instead
+                                 $#Some properties require a specific method:
+                                 $#  - DSTATE_WAIT.Seconds: WaitTime.secondsPath(NUM_CZEXPR)
+                                 $#  - DSTATE_TASK.Credentials.RoleArn: TaskRole.fromRoleArnJsonPath('ROLE_ARN'_CZEXPR)
+                                 $#  - DSTATE_TASK.TimeoutSeconds|HeartbeatSeconds: Timeout.at('DZEXPR')
+                                 $#Not supported yet for:
+                                 $#  - DBATCH.BatchInput
+                                 $#  - DSTATE_PARALLEL.Parameters.*
+                                 $#  - DSTATE_MAP.Parameters.* (if DISTRIBUTED)
+                                 $#  - DREADER_CONF.MaxItems
 
-ALTERNATIVE ==>                   #Instead of using C*EXPR, can use raw format, i.e.:
-                                  #  - value 'D*EXPR'
-                                  #  - key appended with '.$' (if inside DOEXPR) or 'Path' (if VAL[_DZEXPR])
-                                  #Exceptions: C*EXPR is required for:
-                                  #  - DCOND
-                                  #  - specific methods above, like WaitTime.secondPath()
-                                  #  - '$$.Task.Token' when using SERVICE_TASK_PATTERN waitForTaskToken
+ALTERNATIVE ==>                  $#Instead of using C*EXPR, can use raw format, i.e.:
+                                 $#  - value 'D*EXPR'
+                                 $#  - key appended with '.$' (if inside DOEXPR) or 'Path' (if VAL[_DZEXPR])
+                                 $#Exceptions: C*EXPR is required for:
+                                 $#  - DCOND
+                                 $#  - specific methods above, like WaitTime.secondPath()
+                                 $#  - '$$.Task.Token' when using ASYNC_TASK
 
 Data.isJsonPathString(STR)->BOOL
 JsonPath.isEncodedJsonPath(STR)
- ->BOOL                           #Whether STR is a C*EXPR
+ ->BOOL                          $#Whether STR is a C*EXPR
 
-Data.stringAt('DSEXPR')           #'DSEXPR'
-JsonPath.stringAt('DFEXPR')       #'DFEXPR'
+Data.stringAt('DSEXPR')          $#'DSEXPR'
+JsonPath.stringAt('DFEXPR')      $#'DFEXPR'
 
-JsonPath|Data.entirePayload       #'$'
+JsonPath|Data.entirePayload      $#'$'
 
                                   ┌───────────────────┐
                                   │   JSONPATH LINT   │
@@ -3046,18 +3156,18 @@ UUID()->'UUIDv4'                 $#
                                   │   INTRISIC FUNCTION CDK   │
                                   └───────────────────────────┘
 
-JsonPath.DFUNC(ARG,...)           #'States.DFUNC(...)'
-                                  #DFUNC is camelCase'd
-                                  #ARG can be STR, NUM or C*EXPR
-                                  #  - STR is automatically escaped
+JsonPath.DFUNC(ARG,...)          $#'States.DFUNC(...)'
+                                 $#DFUNC is camelCase'd
+                                 $#ARG can be STR, NUM or C*EXPR
+                                 $#  - STR is automatically escaped
 
 Data.numberAt('DSEXPR')
-JsonPath.numberAt('DFEXPR')       #Same but returned as NUM_TK
-Context.numberAt('$$...')         #Must be passed to JsonPath.DFUNC() if ARG is NUM
+JsonPath.numberAt('DFEXPR')      $#Same but returned as NUM_TK
+Context.numberAt('$$...')        $#Must be passed to JsonPath.DFUNC() if ARG is NUM
 
-Data|JsonPath.listAt('DSEXPR')    #Same for ARR (using an ARR_TK)
+Data|JsonPath.listAt('DSEXPR')   $#Same for ARR (using an ARR_TK)
 
-JsonPath.objectAt('DFEXPR')       #Same for OBJ (using a RV)
+JsonPath.objectAt('DFEXPR')      $#Same for OBJ (using a RV)
 
                                   ┌──────────┐
                                   │   TAGS   │
