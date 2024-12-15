@@ -26,17 +26,22 @@ PAGINATION ==>                    #Uses REQ.Limit (def|max: 100) + REQ|RES.NextT
                                   │   BUS   │
                                   └─────────┘
 
+BUS                               #Group that receives EVENTs and sends them to targets
+                                  #Cannot delete if it has some RULEs
+                                  #Types of BUSs|EVENTs:
+                                  #  - default: AWS SERVICEs (see below)
+                                  #  - custom
+                                  #  - partner: AWS registered partner (below)
+
 BUS.Arn                           #'BUS_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:event-bus/BUS'
-BUS.Name                          #'BUS' (more info at CreateEventBus(), DescribeEventBus())
-BUS.Description                   #STR
+BUS.Name                          #'BUS'.
+                                  #Only [:alnum:]-_., max 256 chars
+BUS.Description                   #STR. Max 512 chars
 BUS.CreationTime                  #DATE_NUM
 BUS.LastModifiedTime              #DATE_NUM
 
-BUS.DeadLetterConfig.Arn          #STR
-BUS.KmsKeyIdentifier              #STR (more info at CreateEventBus())
-BUS.Policy                        #STR
-
-BUS.EventSourceName               #STR
+BUS.DeadLetterConfig.Arn          #'SQS_QUEUE_ARN' to send EVENT when it failed???
+BUS.KmsKeyIdentifier              #'KMS_KEY_ARN|MID' (def: AWS managed). Encrypt EVENTs at rest
 
                                   ┌─────────────┐
                                   │   BUS API   │
@@ -63,19 +68,54 @@ DeleteEventBus()                  #Req: BUS
                                   #  - only Name
                                   #Res: empty
 
+                                  ┌─────────────┐
+                                  │   DEFAULT   │
+                                  └─────────────┘
+
+DEFAULT BUS ==>                   #BUS with name 'default'
+                                  #Already created, cannot be deleted
+                                  #Receives EVENTs from AWS SERVICEs
+                                  #Def 'BUS' with DescribeEventBus()
+
+CUSTOM BUS ==>                    #Other BUSs receiving EVENTs from PutEvents() calls
+
                                   ┌────────────┐
                                   │   SOURCE   │
                                   └────────────┘
 
+SOURCE                            #PARTNER sending EVENTs to a BUS
+                                  #First, PARTNER's ACCOUNT:
+                                  #  - creates|deletes the SOURCE
+                                  #     - using *PartnerEventSource*()
+                                  #Then, BUS's ACCOUNT:
+                                  #  - activates the SOURCE by creating a "matching BUS"
+                                  #     - i.e. CreateEventBus() with BUS.EventSourceName set to same 'SOURCE'
+                                  #  - can enable|disable the SOURCE
+                                  #     - using *EventSource*()
 SOURCE.Arn                        #'SOURCE_ARN'. 'arn:aws:events:REGION::event-source/SOURCE'
-SOURCE.Name                       #'SOURCE' (more info at CreatePartnerEventSource())
 SOURCE.CreationTime               #DATE_NUM
 
-SOURCE.CreatedBy                  #STR
-SOURCE.ExpirationTime             #DATE_NUM (more info at ListEventSources())
-SOURCE.State                      #STR
+SOURCE.Name                       #'SOURCE'. Is 'aws.partner/PARTNER/EVENT_NAMESPACE/EVENT'
+                                  #Must be [:alnum:]-. and max 256 chars
+PARTNER                           #AWS registered partner, i.e. known identifier
+EVENT_NAMESPACE                   #Meant only to namespace|categorize 'EVENT' name
+EVENT                             #Name must be unique to this BUS
+                                  #E.g. including its ACCOUNT_ID or PARTNER-specific user ID
+                                  #That's because neither 'BUS' name nor ACCOUNT_ID is in 'SOURCE_ARN'
 
-SOURCE.Account                    #'ACCOUNT_ID'
+SOURCE.CreatedBy                  #'PARTNER'
+SOURCE.Account                    #'ACCOUNT_ID' of BUS (not of PARTNER)
+
+SOURCE.State                      #Can be:
+                                  #  - 'PENDING': either:
+                                  #     - no matching BUS yet
+                                  #     - SOURCE disabled with DeactivateEventSource()
+                                  #  - 'ACTIVE': matching BUS, and not disabled
+                                  #  - 'DELETED': deleted by PARTNER, i.e. by DeletePartnerEventSource()
+SOURCE.ExpirationTime             #DATE_NUM. If SOURCE.State PENDING for 2 weeks, SOURCE is deleted
+
+BUS.EventSourceName               #'SOURCE'. Must be set for a partner BUS
+                                  #'BUS' name must be same as 'SOURCE'
 
                                   ┌────────────────┐
                                   │   SOURCE API   │
@@ -120,22 +160,32 @@ DeletePartnerEventSource()        #Req: SOURCE
                                   │   EVENT   │
                                   └───────────┘
 
-EVENTS.EndpointId                 #STR
-
 EVENTS.Entries                    #EVENT_ARR (more info at PutEvents(), PutPartnerEvents())
-EVENT.Detail                      #STR
-EVENT.DetailType                  #STR
-EVENT.EventBusName                #STR
-EVENT.Resources                   #STR_ARR
-EVENT.Source                      #STR (more info at PutEvents(), PutPartnerEvents())
-EVENT.Time                        #DATE_NUM (more info at PutEvents())
-EVENT.TraceHeader                 #STR
+                                  #Max 10 items
 
-EVENTS_RES.FailedEntryCount       #NUM
+EVENTS_RES.FailedEntryCount       #NUM of failed EVENT_RESs
 EVENTS_RES.Entries                #EVENT_RES_ARR
-EVENT_RES.EventId                 #STR (more info at PutEvents())
-EVENT_RES.ErrorCode               #STR
-EVENT_RES.ErrorMessage            #STR
+                                  #Same length and order as EVENTS.Entries
+EVENT_RES.EventId                 #'EVENT_MID', if successful
+EVENT_RES.ErrorCode               #'CODE', if failed
+EVENT_RES.ErrorMessage            #'MESSAGE', if failed
+
+EVENT                             #Main information being exchanged
+                                  #PutEvents() is used for custom EVENTs
+                                  #PutPartnerEvents() is used for partner EVENTs
+                                  #Max 256KB
+                                  #Max 1000 levels of nesting???
+EVENT.EventBusName                #'BUS[_ARN]' (def: 'default')
+EVENT.Time                        #DATE_NUM (def: now)
+EVENT.Detail                      #'OBJ_JSON'. Main payload
+                                  #Can be anything. Required
+EVENT.DetailType                  #'EVENT_TYPE'. Payload type
+                                  #Can be anything. Required
+EVENT.Source                      #STR. Who sent the payload (more info at PutEvents(), PutPartnerEvents())
+                                  #Can be anything. Required
+EVENT.Resources                   #'ARN'_ARR (def: none) of related RESOURCEs
+                                  #Max 2e3 items
+EVENT.TraceHeader                 #STR
 
                                   ┌────────────────┐
                                   │   EVENT AUTH   │
@@ -175,14 +225,19 @@ TestEventPattern()                #Req: TEST_EVENT_REQ
                                   │   ENDPOINT   │
                                   └──────────────┘
 
+ENDPOINT                          #See "EventBusName" in https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsRequestEntry.html???
 ENDPOINT.Arn                      #'ENDPOINT_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:endpoint/ENDPOINT'
 ENDPOINT.Name                     #'ENDPOINT' (more info with CreateEndpoint())
-ENDPOINT.CreationTime             #DATE_NUM
 ENDPOINT.Description              #STR
-ENDPOINT.EndpointId               #STR
-ENDPOINT.EndpointUrl              #STR (more info with ListEndpoints())
-ENDPOINT.EventBuses[*].EventBusArn#STR (more info with CreateEndpoint())
+ENDPOINT.CreationTime             #DATE_NUM
 ENDPOINT.LastModifiedTime         #DATE_NUM
+
+ENDPOINT.EndpointId               #'ENDPOINT_SUBDOMAIN'
+                                  #Only [:alnum:]-, max 50 chars
+                                  #Must include exactly one dot
+ENDPOINT.EndpointUrl              #'https://ENDPOINT_SUBDOMAIN.endpoints.event.amazonaws.com' (more info with ListEndpoints())
+
+ENDPOINT.EventBuses[*].EventBusArn#STR (more info with CreateEndpoint())
 ENDPOINT.ReplicationConfig.State  #STR (more info with CreateEndpoint())
 ENDPOINT.RoleArn                  #STR
 ENDPOINT.State                    #STR
@@ -193,6 +248,8 @@ ENDPOINT.RoutingConfig
  .FailoverConfig                  #FAILOVER_CONF
 FAILOVER_CONF.Primary.HealthCheck #STR
 FAILOVER_CONF.Secondary.Route     #STR
+
+EVENTS.EndpointId                 #'ENDPOINT_SUBDOMAIN'
 
                                   ┌───────────────────┐
                                   │   ENDPOINT AUTH   │
@@ -553,6 +610,8 @@ CancelReplay()                    #Req: REPLAY
                                   │   ARCHIVE   │
                                   └─────────────┘
 
+ARCHIVE                           #
+                                  #Not if BUS.KmsKeyIdentifier set
 ARCHIVE.ArchiveArn                #'ARCHIVE_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:archive/ARCHIVE'
 ARCHIVE.ArchiveName               #'ARCHIVE'
 ARCHIVE.CreationTime              #DATE_NUM
@@ -595,6 +654,11 @@ DeleteArchive()                   #Req: ARCHIVE
                                   ┌────────────────┐
                                   │   PERMISSION   │
                                   └────────────────┘
+
+BUS.Policy                        #IAM 'POLICY'
+                                  #Resource-level POLICY on BUS
+                                  #Possible PACTIONs: PutEvents() (others???)
+                                  #Can only use Principal.AWS 'ACCOUNT_ID'
 
 PERMISSION.Action                 #STR
 PERMISSION.EventBusName           #STR
@@ -1136,10 +1200,12 @@ DELETE /v1/registries/name
  /version/VERSION_NUM             #  - only SchemaArn, SchemaName, SchemaVersion
 DeleteSchemaVersion()             #Res: empty
 
-                                  ┌──────────────┐
-                                  │   DISCOVER   │
-                                  └──────────────┘
+                                  ┌────────────────┐
+                                  │   DISCOVERER   │
+                                  └────────────────┘
 
+DISCOVERER                        #
+                                  #Not if BUS.KmsKeyIdentifier set
 DISCOVERER.DiscovererArn          #'DISCOVERER_ARN'. 'arn:aws:schemas:REGION:ACCOUNT_ID:discoverer/DISCOVERER_MID'
 DISCOVERER.DiscovererId           #'DISCOVERER_MID'
 DISCOVERER.CrossAccount           #BOOL
