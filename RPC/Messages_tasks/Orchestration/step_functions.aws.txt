@@ -934,7 +934,8 @@ TEST_IN                           #Executes a single STATE, for debugging purpos
                                   #Does not support:
                                   #  - STATE_MAP, STATE_PARALLEL
                                   #  - ACTIVITY
-                                  #  - SERVICE_CALLBACK_TASK, SERVICE_SYNC_TASK
+                                  #  - ASYNC_TASK
+                                  #  - SERVICE_SYNC_TASK
 
 TEST_IN.inspectionLevel           #Fields to omit in TEST_OUT.*. One of:
                                   #  - 'TRACE': none
@@ -1047,7 +1048,7 @@ TEST_DATA.afterResultSelector
 TEST_DATA.result                  #'OUTPUT_JSON' before DSTATE.Output|ResultSelector
 
 EXEC.output                       #Final 'OUTPUT_JSON'. Not if ERROR_OUTPUT
-TEST_OUT|ACTIVITY_TASK.output     #State 'OUTPUT_JSON'. Not if ERROR_OUTPUT
+TEST_OUT|ASYNC_TASK_SUCCESS.output#State 'OUTPUT_JSON'. Not if ERROR_OUTPUT
 
 EVENT_INFO.output                 #'OUTPUT_JSON'
                                   #With EVENT_TYPEs:
@@ -1411,7 +1412,7 @@ ERROR_OUTPUT.Error                #'ERROR_CODE'. Can be undefined
 ERROR_OUTPUT.Cause                #'MESSAGE'. Can be undefined
                                   #Max 32KB
 
-EXEC|TEST_OUT|ACTIVITY_TASK
+EXEC|TEST_OUT|ASYNC_TASK_FAILURE
  .error|cause                     #ERROR_OUTPUT.*
 
 EVENT_INFO.error|cause            #ERROR_OUTPUT.*
@@ -1456,16 +1457,6 @@ DMACHINE.TimeoutSeconds           #NUM (def|max: 1y). Timeout for an EXEC
                                   #Only for top-level MACHINE
 DSTATE_TASK.TimeoutSeconds        #NUM[_DZEXPR] (in secs, def|max: 60). Same but on STATE_TASK
 
-DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
-                                  #On timeout, throw ERROR_CODE 'States.HeartbeatTimeout' + 'States.Timeout'
-                                  #Must be < TimeoutSeconds
-                                  #Only for:
-                                  #  - ACTIVITY_TASK
-                                  #  - SERVICE_CALLBACK_TASK
-                                  #     - starts once SERVICE_TASK_ACTION completed
-                                  #        - except for Lambda with INVOCATION_REQ.InvocationType 'Event', where it starts right away
-                                  #  - SERVICE_SYNC_TASK
-
 EXEC.status                       #Can be 'TIMED_OUT'
 
 MAP_COUNT.timedOut                #NUM timed out
@@ -1477,15 +1468,6 @@ EVENT_TYPE ActivityTimedOut       #On ACTIVITY_TASK timeout
 
 EVENT_INFO.timeoutInSeconds       #NUM
                                   #With EVENT_TYPEs ActivityScheduled, TaskScheduled, LambdaFunctionScheduled
-EVENT_INFO.heartbeatInSeconds     #NUM
-                                  #With EVENT_TYPEs ActivityScheduled, TaskScheduled
-
-                                  ┌─────────────────┐
-                                  │   TIMEOUT API   │
-                                  └─────────────────┘
-
-SendTaskHeartbeat()               #Req: ACTIVITY_TASK
-                                  #Res: empty
 
                                   ┌─────────────────┐
                                   │   TIMEOUT IAC   │
@@ -1494,11 +1476,8 @@ SendTaskHeartbeat()               #Req: ACTIVITY_TASK
 CMACHINE_OPTS.timeout             #DURATION. DMACHINE.TimeoutSeconds
                                   #Must use DefinitionBody.fromChainable()
 
-CSTATE_TASK_OPTS                  #DSTATE_TASK.TimeoutSeconds|HeartbeatSeconds
- .taskTimeout|heartbeatTimeout    #Value must be Timeout.duration(DURATION)
-
-ICMACHINE.grantTaskResponse
- (YGRANTABLE)->CGRANT             #See below
+CSTATE_TASK_OPTS.taskTimeout      #DSTATE_TASK.TimeoutSeconds
+                                  #Value must be Timeout.duration(DURATION)
 
                                   ┌─────────────────────┐
                                   │   TIMEOUT METRICS   │
@@ -1509,8 +1488,6 @@ AWS/States/LambdaFunctionsTimedOut#NUM of LAMBDA_TASKs timed out
 AWS/States/
  ServiceIntegrationsTimedOut      #NUM of SERVICE_TASKs timed out
 AWS/States/ActivitiesTimedOut     #NUM of ACTIVITY_TASKs timed out
-AWS/States/
- ActivitiesHeartbeatTimedOut      #NUM of ACTIVITY_TASKs timed out due to heartbeat
 
 DVAR StateMachineArn
  |LambdaFunctionArn
@@ -1525,8 +1502,7 @@ ICMACHINE.metricTimedOut
  ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR StateMachineArn, statistic 'Sum'
 CLAMBDA_TASK.metricTimedOut
  ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR LambdaFunctionArn|Qualifier, statistic 'Sum'
-CACTIVITY[_TASK]
- .metric[Heartbeat]TimedOut
+CACTIVITY[_TASK].metricTimedOut
  ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR ActivityArn, statistic 'Sum'
 
                                   ┌───────────┐
@@ -2195,11 +2171,11 @@ DSTATE.Type                       #'Task'. STATE is STATE_TASK
 DSTATE_TASK.Resource              #'ARN'. Available ones documented below
                                   #Required
 
-EVENT_TYPE TaskSubmitted          #On TASK submit success???
-EVENT_TYPE TaskSubmitFailed       #On TASK submit failure???
-EVENT_TYPE TaskScheduled          #On TASK schedule???
+EVENT_TYPE TaskScheduled          #On TASK schedule
 EVENT_TYPE TaskStarted            #On TASK start success
-EVENT_TYPE TaskStartFailed        #On TASK start failure???
+EVENT_TYPE TaskStartFailed        #On TASK start failure
+EVENT_TYPE TaskSubmitted          #On TASK submit success
+EVENT_TYPE TaskSubmitFailed       #On TASK submit failure
 EVENT_TYPE TaskSucceeded          #On TASK end success
 EVENT_TYPE TaskStateAborted       #On TASK end abort
 EVENT_TYPE TaskFailed             #On TASK end failure
@@ -2262,214 +2238,6 @@ CTASK_METRICS.metricPrefixPlural  #Same but SUFFIX is Scheduled, Started, Succee
 
 DIAG_ERROR INVALID_RESOURCE       #DSTATE_TASK.Resource must be valid
 
-                                  ┌─────────────────┐
-                                  │   TASK LAMBDA   │
-                                  └─────────────────┘
-
-DSTATE_TASK.Resource              #'FUNC_VERSION_ARN[.SERVICE_TASK_PATTERN]'. LAMBDA_TASK
-                                  #Calls Lambda Invoke()
-                                  #Cannot use INVOCATION_RES.LogResult, InvokeWithResponseStream()
-                                  #Can use SERVICE_TASK_PATTERN waitForTaskToken
-INPUT.FunctionName                #'FUNC_ARN' of INVOCATION_REQ.FunctionArn
-INPUT.Qualifier                   #'QUALIFIER' of INVOCATION_REQ.FunctionArn
-INPUT.InvocationType              #INVOCATION_REQ.InvocationType (def: 'RequestResponse')
-INPUT.Payload|ClientContext       #INVOCATION_REQ.*
-
-OUTPUT.StatusCode|Payload
- |ExecutedVersion                 #INVOCATION_RES.*
-OUTPUT
- .SdkResponseMetadata.RequestId   #'REQ_ID'
-OUTPUT.SdkHttpMetadata.HttpHeaders#HEADERS_OBJ
-
-ERROR_OUTPUT                      #On invocation|FUNCTION error
-
-SERVICE_TASK_ACTION lambda:invoke #Same except run as a SERVICE_TASK
-
-EVENT_TYPE LambdaFunctionScheduled#Like EVENT_TYPE Task*
-EVENT_INFO.resource               #'FUNC_ARN'
-                                  #With EVENT_TYPE LambdaFunctionScheduled
-EVENT_TYPE
- LambdaFunctionScheduleFailed
-EVENT_TYPE LambdaFunctionStarted
-EVENT_TYPE
- LambdaFunctionStartFailed
-EVENT_TYPE LambdaFunctionSucceeded
-EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task*
-
-                                  ┌──────────────────────┐
-                                  │   TASK LAMBDA AUTH   │
-                                  └──────────────────────┘
-
-PACTION lambda:InvokeFunction     #Must be allowed for MACHINE.roleArn
-
-                                  ┌─────────────────────┐
-                                  │   TASK LAMBDA SAM   │
-                                  └─────────────────────┘
-
-AWS::Serverless::Connector        #Can be used with:
-                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
-                                  #  - Destination: Lambda FUNCTION (RESOURCE_REF.Arn)
-                                  #  - Permissions 'Write'
-                                  #Transformed to a MPOLICY on 'ROLE':
-                                  #  - allowing lambda:InvokeFunction
-                                  #  - on FUNCTION
-
-                                  ┌──────────────────────────┐
-                                  │   TASK LAMBDA COMPOSER   │
-                                  └──────────────────────────┘
-
-MACHINE ENHANCED COMPONENT ==>    #Can use Lambda FUNCTION as source
-                                  #Adds POLICYs and pass identifiers as ENVVARs to FUNCTION
-
-                                  ┌─────────────────────────┐
-                                  │   TASK LAMBDA METRICS   │
-                                  └─────────────────────────┘
-
-AWS/States/LambdaFunctionRunTime  #Duration (in ms) of LAMBDA_TASKs
-AWS/States/
- LambdaFunctionScheduleTime       #Duration (in ms) of LAMBDA_TASKs, scheduling time only
-AWS/States/LambdaFunctionTime     #Duration (is ms) of LAMBDA_TASKs, excluding scheduling
-
-AWS/States/LambdaFunctionsStarted #NUM of LAMBDA_TASKs started
-AWS/States/
- LambdaFunctionsScheduled         #NUM of LAMBDA_TASKs scheduled
-AWS/States/
- LambdaFunctionsSucceeded         #NUM of LAMBDA_TASKs successful
-AWS/States/LambdaFunctionsFailed  #NUM of LAMBDA_TASKs failed
-
-DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
-
-                                  ┌─────────────────────────────┐
-                                  │   TASK LAMBDA METRICS IAC   │
-                                  └─────────────────────────────┘
-
-CLAMBDA_TASK.metric
- ('METRIC'[, CMETRIC_OPTS])
- ->CMETRIC                        #Sets DVAR LambdaFunctionArn|Qualifier, statistic 'Sum'
-CLAMBDA_TASK.metricMETRIC         #Same except 'METRIC' omits 'LambdaFunction' prefix, e.g. CLAMBDA_TASK.metricRunTime()
- ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
-
-                                  ┌──────────────────┐
-                                  │   TASK SERVICE   │
-                                  └──────────────────┘
-
-DSTATE_TASK.Resource              #'arn:aws:states:[REGION???]:[ACCOUNT_ID|aws-sdk???]:SERVICE_TASK_ACTION[.SERVICE_TASK_PATTERN]'
-                                  #SERVICE_TASK. Run specific AWS SERVICE ACTION
-                                  #Only specific ones, documented in their respective docs
-                                  #Available SERVICE_TASK_ACTIONs depend on SERVICE
-INPUT.*                           #SERVICE_TASK_ACTION-specific, but usually mostly correspond to an ACTION PARAMS.*
-OUTPUT.*                          #Same for ACTION RES.*
-
-SERVICE_TASK_PATTERN              #SERVICE_CALLBACK_TASK, "callback pattern"
- waitForTaskToken                 #Completion requires both:
-                                  #  - SERVICE_TASK_ACTION's response|failure
-                                  #  - SendTask*() calls
-                                  #I.e. meant for async tasks which last longer than SERVICE_TASK_ACTION
-CONTEXT.Task.Token                #'ACTIVITY_TASK_MID'
-
-SERVICE_TASK_PATTERN sync         #SERVICE_SYNC_TASK, "job pattern"???
-
-                                  ┌─────────────────────┐
-                                  │   TASK SERVICE UI   │
-                                  └─────────────────────┘
-
-WORKFLOW STUDIO ==>               #Can view|edit SERVICE_TASKs
-
-                                  ┌───────────────────────┐
-                                  │   TASK SERVICE AUTH   │
-                                  └───────────────────────┘
-
-PACTION states:
- SendTaskSuccess|Failure|Heartbeat#Must be allowed in SERVICE to use SERVICE_TASK_PATTERN waitForTaskToken
-
-                                  ┌──────────────────────┐
-                                  │   TASK SERVICE IAC   │
-                                  └──────────────────────┘
-
-CSTATE_TASK_OPTS                  #SERVICE_TASK_PATTERN among:
- .integrationPattern              #  - 'REQUEST_RESPONSE' (def): none
-                                  #  - 'WAIT_FOR_TASK_TOKEN': 'waitForTaskToken'
-                                  #  - 'RUN_JOB': 'sync'
-                                  #Cannot be used with CCUSTOM_TASK: must set DSTATE_TASK.Resource using CCUSTOM_TASK._renderTask instead
-
-JsonPath|Context.taskToken        #'$$.Task.Token'
-
-TaskInput.from*(VAL)              #CTASK_INPUT. Just wraps its argument as is
-                                  #Used as a type for some SERVICE_TASK's INPUT.* values
-TaskInput.fromText(STR)           #
-TaskInput.fromObject(OBJ)         #
-TaskInput.fromJsonPathAt('DFEXPR')#
-
-                                  ┌──────────────────────┐
-                                  │   TASK SERVICE SAM   │
-                                  └──────────────────────┘
-
-StepFunctionsCallbackPolicy       #SAM POLICY_TEMPLATE (see its doc) that allows:
-                                  #  - PACTION states:SendTaskFailure|SendTaskHeartbeat|SendTaskSuccess
-                                  #  - on 'MACHINE'
-                                  #     - using POLICY_TEMPLATE_PARAMS.StateMachineName
-
-AWS::Serverless::Connector        #Can be used with:
-                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
-                                  #  - Destination: QUEUE (RESOURCE_REF.Arn)
-                                  #  - Permissions 'Write'
-                                  #Transformed to a MPOLICY on 'ROLE':
-                                  #  - allowing sqs:SendMessage
-                                  #  - on QUEUE
-
-                                  ┌───────────────────────────┐
-                                  │   TASK SERVICE COMPOSER   │
-                                  └───────────────────────────┘
-
-MACHINE ENHANCED COMPONENT ==>    #Can add SERVICE_TASK by linking UI components
-                                  #Must first add RESPROP DefinitionSubstitutions.KEY and use it as value in SERVICE-specific INPUT
-                                  #E.g. for Lambda: INPUT.FunctionName '${KEY}'
-
-                                  ┌──────────────────────────┐
-                                  │   TASK SERVICE METRICS   │
-                                  └──────────────────────────┘
-
-AWS/States/
- ServiceIntegrationRunTime        #Duration (in ms) of SERVICE_TASKs
-AWS/States/
- ServiceIntegrationScheduleTime   #Duration (in ms) of SERVICE_TASKs, scheduling time only
-AWS/States/ServiceIntegrationTime #Duration (is ms) of SERVICE_TASKs, excluding scheduling
-
-AWS/States/
- ServiceIntegrationsStarted       #NUM of SERVICE_TASKs started
-AWS/States/
- ServiceIntegrationsScheduled     #NUM of SERVICE_TASKs scheduled
-AWS/States/
- ServiceIntegrationsSucceeded     #NUM of SERVICE_TASKs successful
-AWS/States/
- ServiceIntegrationsFailed        #NUM of SERVICE_TASKs failed
-
-DVAR ServiceIntegrationResourceArn#DSTATE_TASK.Resource. With AWS/States/ServiceIntegration*
-
-                                  ┌─────────────────────────────┐
-                                  │   TASK SERVICE NESTED SAM   │
-                                  └─────────────────────────────┘
-
-AWS::Serverless::Connector        #Can be used with:
-                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
-                                  #  - Destination: MACHINE2 (RESOURCE_REF.Arn + RESOURCE_REF.Name)
-                                  #  - Permissions 'Read' and|or 'Write'
-                                  #Transformed to a MPOLICY on 'ROLE':
-                                  #  - allowing on MACHINE2 (from Arn):
-                                  #     - Write: states:StartExecution
-                                  #  - allowing on EXECUTION/* (from Name):
-                                  #     - Read: states:DescribeExecution
-                                  #     - Write: states:StopExecution
-                                  #  - allowing on RULE 'StepFunctionsGetEventsForStepFunctionsExecutionRule':
-                                  #     - Read: states:DescribeRule
-                                  #     - Write: states:PutRule|PutTargets
-
-                                  ┌──────────────────────────────────┐
-                                  │   TASK SERVICE NESTED COMPOSER   │
-                                  └──────────────────────────────────┘
-
-MACHINE ENHANCED COMPONENT ==>    #Includes nested MACHINE
-
                                   ┌───────────────┐
                                   │   TASK HTTP   │
                                   └───────────────┘
@@ -2527,6 +2295,192 @@ CLOUDTRAIL ==>                    #TASK_HTTP requests are logged with CloudTrail
 
 CLOUDTRAIL_SMETADATA.httpMethod   #'HTTP_METHOD'
 CLOUDTRAIL_SMETADATA.httpEndpoint #'URL'
+
+                                  ┌──────────────────┐
+                                  │   TASK SERVICE   │
+                                  └──────────────────┘
+
+DSTATE_TASK.Resource              #'arn:aws:states:[REGION???]:aws-sdk:SERVICE_TASK_ACTION[.SERVICE_TASK_PATTERN]'
+                                  #"SDK integration". SERVICE_TASK that runs any AWS SERVICE ACTION
+SERVICE_TASK_ACTION               #Any 'SERVICE:ACTION'
+INPUT.*                           #ACTION's PARAMS.*
+OUTPUT.*                          #ACTION's RES.*
+
+DSTATE_TASK.Resource              #'arn:aws:states:[REGION???]:[ACCOUNT_ID]:SERVICE_TASK_ACTION[.SERVICE_TASK_PATTERN]'
+                                  #"Optimized integration". Same but optimized for a specific SERVICE + ACTION
+                                  #E.g. automatically encode PARAMs or decode RES
+                                  #Only specific ones, documented in their respective docs
+SERVICE_TASK_ACTION               #Available ones depend on SERVICE, but usually similar to 'SERVICE:ACTION'
+INPUT.*                           #SERVICE_TASK_ACTION-specific, but usually mostly correspond to an ACTION's PARAMS.*
+OUTPUT.*                          #Same for ACTION's RES.*
+
+                                  ┌─────────────────────┐
+                                  │   TASK SERVICE UI   │
+                                  └─────────────────────┘
+
+WORKFLOW STUDIO ==>               #Can view|edit SERVICE_TASKs
+
+                                  ┌──────────────────────┐
+                                  │   TASK SERVICE IAC   │
+                                  └──────────────────────┘
+
+TaskInput.from*(VAL)              #CTASK_INPUT. Just wraps its argument as is
+                                  #Used as a type for some SERVICE_TASK's INPUT.* values
+TaskInput.fromText(STR)           #
+TaskInput.fromObject(OBJ)         #
+TaskInput.fromJsonPathAt('DFEXPR')#
+
+                                  ┌───────────────────────────┐
+                                  │   TASK SERVICE COMPOSER   │
+                                  └───────────────────────────┘
+
+MACHINE ENHANCED COMPONENT ==>    #Can add SERVICE_TASK by linking UI components
+                                  #Must first add RESPROP DefinitionSubstitutions.KEY and use it as value in SERVICE-specific INPUT
+                                  #E.g. for Lambda: INPUT.FunctionName '${KEY}'
+
+                                  ┌──────────────────────────┐
+                                  │   TASK SERVICE METRICS   │
+                                  └──────────────────────────┘
+
+AWS/States/
+ ServiceIntegrationRunTime        #Duration (in ms) of SERVICE_TASKs
+AWS/States/
+ ServiceIntegrationScheduleTime   #Duration (in ms) of SERVICE_TASKs, scheduling time only
+AWS/States/ServiceIntegrationTime #Duration (is ms) of SERVICE_TASKs, excluding scheduling
+
+AWS/States/
+ ServiceIntegrationsScheduled     #NUM of SERVICE_TASKs scheduled
+AWS/States/
+ ServiceIntegrationsStarted       #NUM of SERVICE_TASKs started
+AWS/States/
+ ServiceIntegrationsSucceeded     #NUM of SERVICE_TASKs successful
+AWS/States/
+ ServiceIntegrationsFailed        #NUM of SERVICE_TASKs failed
+
+DVAR ServiceIntegrationResourceArn#DSTATE_TASK.Resource. With AWS/States/ServiceIntegration*
+
+                                  ┌─────────────────┐
+                                  │   TASK LAMBDA   │
+                                  └─────────────────┘
+
+lambda:invoke                     #SERVICE_TASK_ACTION calling Invoke()
+                                  #Cannot use INVOCATION_RES.LogResult, InvokeWithResponseStream()
+                                  #Can use SERVICE_TASK_PATTERN waitForTaskToken
+
+INPUT.FunctionName                #'FUNC_ARN' of INVOCATION_REQ.FunctionArn
+INPUT.Qualifier                   #'QUALIFIER' of INVOCATION_REQ.FunctionArn
+INPUT.InvocationType              #INVOCATION_REQ.InvocationType (def: 'RequestResponse')
+INPUT.Payload|ClientContext       #INVOCATION_REQ.*
+
+OUTPUT.StatusCode|Payload
+ |ExecutedVersion                 #INVOCATION_RES.*
+OUTPUT
+ .SdkResponseMetadata.RequestId   #'REQ_ID'
+OUTPUT.SdkHttpMetadata.HttpHeaders#HEADERS_OBJ
+
+ERROR_OUTPUT                      #On invocation|FUNCTION error
+
+DSTATE_TASK.Resource              #'FUNC_VERSION_ARN[.SERVICE_TASK_PATTERN]'. LAMBDA_TASK
+                                  #Same as SERVICE_TASK_ACTION 'lambda:invoke' except emits its own EVENTs and METRICs
+EVENT_TYPE LambdaFunctionScheduled#Like EVENT_TYPE Task*
+EVENT_INFO.resource               #'FUNC_ARN'
+                                  #With EVENT_TYPE LambdaFunctionScheduled
+EVENT_TYPE
+ LambdaFunctionScheduleFailed
+EVENT_TYPE LambdaFunctionStarted
+EVENT_TYPE
+ LambdaFunctionStartFailed
+EVENT_TYPE LambdaFunctionSucceeded
+EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task*
+
+                                  ┌──────────────────────┐
+                                  │   TASK LAMBDA AUTH   │
+                                  └──────────────────────┘
+
+PACTION lambda:InvokeFunction     #Must be allowed for MACHINE.roleArn
+
+                                  ┌─────────────────────┐
+                                  │   TASK LAMBDA SAM   │
+                                  └─────────────────────┘
+
+AWS::Serverless::Connector        #Can be used with:
+                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
+                                  #  - Destination: Lambda FUNCTION (RESOURCE_REF.Arn)
+                                  #  - Permissions 'Write'
+                                  #Transformed to a MPOLICY on 'ROLE':
+                                  #  - allowing lambda:InvokeFunction
+                                  #  - on FUNCTION
+
+                                  ┌──────────────────────────┐
+                                  │   TASK LAMBDA COMPOSER   │
+                                  └──────────────────────────┘
+
+MACHINE ENHANCED COMPONENT ==>    #Can use Lambda FUNCTION as source
+                                  #Adds POLICYs and pass identifiers as ENVVARs to FUNCTION
+
+                                  ┌─────────────────────────┐
+                                  │   TASK LAMBDA METRICS   │
+                                  └─────────────────────────┘
+
+AWS/States/LambdaFunctionRunTime  #Duration (in ms) of LAMBDA_TASKs
+AWS/States/
+ LambdaFunctionScheduleTime       #Duration (in ms) of LAMBDA_TASKs, scheduling time only
+AWS/States/LambdaFunctionTime     #Duration (is ms) of LAMBDA_TASKs, excluding scheduling
+
+AWS/States/
+ LambdaFunctionsScheduled         #NUM of LAMBDA_TASKs scheduled
+AWS/States/LambdaFunctionsStarted #NUM of LAMBDA_TASKs started
+AWS/States/
+ LambdaFunctionsSucceeded         #NUM of LAMBDA_TASKs successful
+AWS/States/LambdaFunctionsFailed  #NUM of LAMBDA_TASKs failed
+
+DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
+
+                                  ┌─────────────────────────────┐
+                                  │   TASK LAMBDA METRICS IAC   │
+                                  └─────────────────────────────┘
+
+CLAMBDA_TASK.metric
+ ('METRIC'[, CMETRIC_OPTS])
+ ->CMETRIC                        #Sets DVAR LambdaFunctionArn|Qualifier, statistic 'Sum'
+CLAMBDA_TASK.metricMETRIC         #Same except 'METRIC' omits 'LambdaFunction' prefix, e.g. CLAMBDA_TASK.metricRunTime()
+ ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
+
+                                  ┌──────────────────┐
+                                  │   TASK SQS SAM   │
+                                  └──────────────────┘
+
+AWS::Serverless::Connector        #Can be used with:
+                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
+                                  #  - Destination: QUEUE (RESOURCE_REF.Arn)
+                                  #  - Permissions 'Write'
+                                  #Transformed to a MPOLICY on 'ROLE':
+                                  #  - allowing sqs:SendMessage
+                                  #  - on QUEUE
+
+                                  ┌─────────────────────────────┐
+                                  │   TASK SERVICE NESTED SAM   │
+                                  └─────────────────────────────┘
+
+AWS::Serverless::Connector        #Can be used with:
+                                  #  - Source: MACHINE (RESOURCE_REF.RoleName)
+                                  #  - Destination: MACHINE2 (RESOURCE_REF.Arn + RESOURCE_REF.Name)
+                                  #  - Permissions 'Read' and|or 'Write'
+                                  #Transformed to a MPOLICY on 'ROLE':
+                                  #  - allowing on MACHINE2 (from Arn):
+                                  #     - Write: states:StartExecution
+                                  #  - allowing on EXECUTION/* (from Name):
+                                  #     - Read: states:DescribeExecution
+                                  #     - Write: states:StopExecution
+                                  #  - allowing on RULE 'StepFunctionsGetEventsForStepFunctionsExecutionRule':
+                                  #     - Read: states:DescribeRule
+                                  #     - Write: states:PutRule|PutTargets
+
+                                  ┌──────────────────────────────────┐
+                                  │   TASK SERVICE NESTED COMPOSER   │
+                                  └──────────────────────────────────┘
+
+MACHINE ENHANCED COMPONENT ==>    #Includes nested MACHINE
 
                                   ┌───────────────────────────┐
                                   │   TASK ACTIVITY DECLARE   │
@@ -2588,19 +2542,16 @@ ICMACHINE.grantRead(YGRANTABLE)
                                   │   TASK ACTIVITY RUN   │
                                   └───────────────────────┘
 
-ACTIVITY_TASK                     #TASK started|ended on a user-controlled compute (serverless, long running, local)
-ACTIVITY_TASK.taskToken           #'ACTIVITY_TASK_MID'
-                                  #Empty STR if long polled for 1m, i.e. must retry
-
-ACTIVITY_TASK_GET                 #Get an ACTIVITY_TASK
-                                  #ACTIVITY_TASK is created when an EXEC runs a STATE_TASK
-                                  #that uses DSTATE_TASK.Resource 'ACTIVITY_ARN'
+ACTIVITY_TASK_GET                 #Get an ACTIVITY_TASK, i.e. TASK started|ended on a user-controlled compute
+                                  #E.g. serverless, long running, local
+                                  #ACTIVITY_TASK is created when a DSTATE_TASK with Resource 'ACTIVITY_ARN' is run
                                   #Until created, long polls for it
-                                  #"Scheduled" is when created but not fetched by ACTIVITY_TASK_GET yet
-                                  #On success|failure, must call SendTaskSuccess|Failure()
+                                  #  - after 1m, returns ACTIVITY_TASK.taskToken empty STR
+                                  #  - then must retry
                                   #Not logged by CloudTrail
                                   #Max 1e3 at once
 ACTIVITY_TASK_GET.activityArn     #'ACTIVITY_ARN'
+
 ACTIVITY_TASK_GET.workerName      #'ACTIVITY_WORKER'. Only used for logging purpose, with EVENT_INFO.workerName
 
 EVENT_TYPE ActivityScheduled      #
@@ -2619,13 +2570,6 @@ EVENT_TYPE ActivityFailed         #
 
 GetActivityTask()                 #Req: ACTIVITY_TASK_GET
                                   #Res: ACTIVITY_TASK
-                                  #  - only one with input
-SendTaskSuccess()                 #Req: ACTIVITY_TASK
-                                  #  - only one with output
-                                  #Res: empty
-SendTaskFailure()                 #Req: ACTIVITY_TASK
-                                  #  - only one with error, cause
-                                  #Res: empty
 
                                   ┌───────────────────────────┐
                                   │   TASK ACTIVITY RUN IAC   │
@@ -2635,9 +2579,6 @@ CACTIVITY.grant
  (YGRANTABLE, 'PACTION',...)
  ->CGRANT                         #Allow PACTION on Resource ACTIVITY_ARN
 
-ICMACHINE.grantTaskResponse
- (YGRANTABLE)->CGRANT             #Allows PACTION 'states:SendTaskSuccess|SendTaskFailure|SendTaskHeartbeat' to MACHINE
-
                                   ┌───────────────────────────────┐
                                   │   TASK ACTIVITY RUN METRICS   │
                                   └───────────────────────────────┘
@@ -2646,8 +2587,8 @@ AWS/States/ActivityRunTime        #Duration (in ms) of ACTIVITY_TASKs
 AWS/States/ActivityScheduleTime   #Duration (in ms) of ACTIVITY_TASKs, scheduling time only
 AWS/States/ActivityTime           #Duration (is ms) of ACTIVITY_TASKs, excluding scheduling
 
-AWS/States/ActivitiesStarted      #NUM of ACTIVITY_TASKs started
 AWS/States/ActivitiesScheduled    #NUM of ACTIVITY_TASKs scheduled
+AWS/States/ActivitiesStarted      #NUM of ACTIVITY_TASKs started
 AWS/States/ActivitiesSucceeded    #NUM of ACTIVITY_TASKs successful
 AWS/States/ActivitiesFailed       #NUM of ACTIVITY_TASKs failed
 
@@ -2663,6 +2604,126 @@ CACTIVITY[_TASK].metric
  ->CMETRIC                        #Sets DVAR ActivityArn, statistic 'Sum'
 CACTIVITY[_TASK].metricMETRIC     #Same except 'METRIC' omits 'Activity' prefix, e.g. CACTIVITY[_TASK].metricRunTime()
  ([CMETRIC_OPTS])->CMETRIC        #Also uses statistic 'Average' for *Time
+
+                                  ┌────────────────┐
+                                  │   TASK ASYNC   │
+                                  └────────────────┘
+
+ASYNC_TASK                        #"Callback pattern". TASK that signals TASK's completion manually
+                                  #Do so by calling SendTask*()
+ASYNC_TASK_*.taskToken            #'ASYNC_TASK_MID'. To send with SendTask*()
+
+SERVICE_TASK_PATTERN              #Make a SERVICE_TASK an ASYNC_TASK
+ waitForTaskToken                 #Always wait for SERVICE_TASK_ACTION to complete???
+                                  #Some SERVICE_TASK_ACTION supports it, others not
+CONTEXT.Task.Token                #'ASYNC_TASK_MID'
+
+ACTIVITY_TASK.taskToken           #'ASYNC_TASK_MID'. ACTIVITY_TASKs are always ASYNC_TASKs
+
+EVENT_TYPE *Scheduled             #When ASYNC_TASK starts
+EVENT_TYPE *Started               #When consumer gets the ASYNC_TASK_MID:
+                                  #  - SERVICE_TASK: right after *Scheduled
+                                  #  - ACTIVITY_TASK: GetActivityTask()
+EVENT_TYPE *StartFailed           #Failure during *Started
+                                  #E.g. GetActivityTask() with wrong credentials
+EVENT_TYPE *Submitted             #When initial consumer logic done:
+                                  #  - SERVICE_TASK: SERVICE_TASK_ACTION success
+                                  #  - ACTIVITY_TASK: right after *Started
+EVENT_TYPE *SubmitFailed          #Failure during *Submitted
+                                  #E.g. SERVICE_TASK_ACTION failed
+
+SERVICE_TASK_PATTERN sync         #SERVICE_SYNC_TASK, "job pattern"???
+
+                                  ┌─────────────────────┐
+                                  │   TASK ASYNC AUTH   │
+                                  └─────────────────────┘
+
+PACTION states:                   #Must be allowed
+ SendTaskSuccess|Failure|Heartbeat#E.g. if SERVICE_TASK_PATTERN waitForTaskToken, the compute instance
+                                  #must be allowed to call SendTask*()
+
+                                  ┌────────────────────┐
+                                  │   TASK ASYNC API   │
+                                  └────────────────────┘
+
+SendTaskSuccess()                 #Req: ASYNC_TASK_SUCCESS
+                                  #Res: empty
+SendTaskFailure()                 #Req: ASYNC_TASK_FAILURE
+                                  #Res: empty
+
+                                  ┌────────────────────┐
+                                  │   TASK ASYNC IAC   │
+                                  └────────────────────┘
+
+CSTATE_TASK_OPTS                  #SERVICE_TASK_PATTERN among:
+ .integrationPattern              #  - 'REQUEST_RESPONSE' (def): none
+                                  #  - 'WAIT_FOR_TASK_TOKEN': 'waitForTaskToken'
+                                  #  - 'RUN_JOB': 'sync'
+                                  #Cannot be used with CCUSTOM_TASK: must set DSTATE_TASK.Resource using CCUSTOM_TASK._renderTask instead
+
+JsonPath|Context.taskToken        #'$$.Task.Token'
+
+ICMACHINE.grantTaskResponse
+ (YGRANTABLE)->CGRANT             #Allows PACTION 'states:SendTaskSuccess|SendTaskFailure|SendTaskHeartbeat' to MACHINE
+
+                                  ┌────────────────────┐
+                                  │   TASK ASYNC SAM   │
+                                  └────────────────────┘
+
+StepFunctionsCallbackPolicy       #SAM POLICY_TEMPLATE (see its doc) that allows:
+                                  #  - PACTION states:SendTaskFailure|SendTaskHeartbeat|SendTaskSuccess
+                                  #  - on 'MACHINE'
+                                  #     - using POLICY_TEMPLATE_PARAMS.StateMachineName
+
+                                  ┌────────────────────┐
+                                  │   TASK HEARTBEAT   │
+                                  └────────────────────┘
+
+DSTATE_TASK.HeartbeatSeconds      #NUM[_DZEXPR] (in secs, def: none). Heartbeat timeout, reset after each heartbeat
+                                  #On timeout, throw ERROR_CODEs:
+                                  #  - 'States.HeartbeatTimeout'
+                                  #  - also 'States.Timeout': see above for related EVENTs and METRICs
+                                  #Must be < DTASK_TASK.TimeoutSeconds
+                                  #Only for:
+                                  #  - ASYNC_TASK
+                                  #     - starts once ACTIVITY_TASK_GET|SERVICE_TASK_ACTION completed
+                                  #  - SERVICE_SYNC_TASK
+
+EVENT_INFO.heartbeatInSeconds     #DSTATE_TASK.HeartbeatSeconds
+                                  #With EVENT_TYPEs ActivityScheduled, TaskScheduled
+
+                                  ┌────────────────────────┐
+                                  │   TASK HEARTBEAT API   │
+                                  └────────────────────────┘
+
+SendTaskHeartbeat()               #Req: ASYNC_TASK_HEARTBEAT
+                                  #Res: empty
+
+                                  ┌────────────────────────┐
+                                  │   TASK HEARTBEAT IAC   │
+                                  └────────────────────────┘
+
+CSTATE_TASK_OPTS.heartbeatTimeout #DSTATE_TASK.HeartbeatSeconds
+                                  #Value must be Timeout.duration(DURATION)
+
+ICMACHINE.grantTaskResponse
+ (YGRANTABLE)->CGRANT             #See above
+
+                                  ┌────────────────────────────┐
+                                  │   TASK HEARTBEAT METRICS   │
+                                  └────────────────────────────┘
+
+AWS/States/
+ ActivitiesHeartbeatTimedOut      #NUM of ACTIVITY_TASKs timed out due to heartbeat
+DVAR ActivityArn                  #See above
+
+                                  ┌────────────────────────────────┐
+                                  │   TASK HEARTBEAT METRICS IAC   │
+                                  └────────────────────────────────┘
+
+CACTIVITY[_TASK]
+ .metricHeartbeatTimedOut
+ ([CMETRIC_OPTS])->CMETRIC        #Sets DVAR ActivityArn, statistic 'Sum'
 
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
