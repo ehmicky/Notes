@@ -7,16 +7,10 @@ VERSION ==>                       #2024-11-28
 
 TODO:
   - CDK:
-     - Step Functions:
-        - https://docs.aws.amazon.com/step-functions/latest/dg/connect-stepfunctions.html
-        - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks/lib/stepfunctions
-           - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks#step-functions
-     - https://docs.aws.amazon.com/step-functions/latest/dg/tutorial-lambda-state-machine-cdk.html
-     - https://docs.aws.amazon.com/step-functions/latest/dg/tutorial-step-functions-rest-api-integration-cdk.html
-     - check new_services doc, CDK section
      - document which properties are supported by --hotswap
      - DCALL*.waitForAssertions() usage of MACHINE
      - Provider() usage of MACHINE
+     - check new_services doc, CDK section
   - cdk-monitoring-constructs
      - check its section in new_services doc
   - SAM:
@@ -2701,6 +2695,8 @@ new SqsSendMessage(...CARGS, OPTS)#CSTATE_TASK for sqs:sendMessage OPTIMIZED_SER
  ->CSQS_TASK                      #Automatically allows PACTIONs as described above
                                   #Cannot set INPUT.MessageAttributes
 
+OPTS.*                            #CSTATE_TASK_OPTS.*
+
 OPTS.queue                        #ICQUEUE
 OPTS.messageBody                  #CTASK_INPUT. INPUT.MessageBody
 OPTS.messageGroupId
@@ -2742,6 +2738,8 @@ PACTION sns:Publish               #Must be allowed for MACHINE.roleArn on the TO
 new SnsPublish(...CARGS, OPTS)    #CSTATE_TASK for sns:publish OPTIMIZED_SERVICE_TASK
  ->CSNS_TASK                      #Automatically allows PACTIONs as described above
                                   #Cannot set INPUT.PhoneNumber|TargetArn
+
+OPTS.*                            #CSTATE_TASK_OPTS.*
 
 OPTS.topic                        #ICTOPIC
 OPTS.message                      #CTASK_INPUT. INPUT.Message
@@ -2800,6 +2798,8 @@ new CallApiGatewayHttpApiEndpoint-#CSTASK_TASK for apigateway:invoke OPTIMIZED_S
                                   #  - unless OPTS.authType explicitely set to 'NO_AUTH'
                                   #Cannot set INPUT.AllowNullValues
 
+OPTS.*                            #CSTATE_TASK_OPTS.*
+
 OPTS.api                         =#ICAPI. INPUT.ApiEndpoint
 OPTS.apiId                       -#'API_MID'. INPUT.ApiEndpoint
 OPTS.apiStack                    -#CSTACK of API, e.g. Stack.of(CAPI)
@@ -2813,7 +2813,54 @@ OPTS.headers|queryParameters
                                   │   TASK SERVICE NESTED   │
                                   └─────────────────────────┘
 
-                                  #Can be ASYNC_TASK or JOB_TASK
+states:startExecution             #OPTIMIZED_SERVICE_TASK that calls StartExecution()
+                                  #Nested EXEC, but as a top-level EXEC
+                                  #Difference from child MACHINEs (and their ITEM_EXECs):
+                                  #  - MACHINEs and EXECs are completely separate
+                                  #  - meant for re-using sub-MACHINEs as components
+                                  #Can be:
+                                  #  - ASYNC_TASK
+                                  #  - JOB_TASK: using StartSyncExecution()
+                                  #     - SERVICE_TASK_PATTERN is either '.sync' or '.sync:2'
+
+INPUT.*                           #EXEC.* (PascalCase'd) except no includedData|traceHeader
+
+INPUT.AWS_STEP_FUNCTIONS_         #Must be set to CONTEXT.Execution.Id
+ STARTED_BY_EXECUTION_ID          #This allows nested EXEC to know about its parent
+                                  #This seems to be currently only used in UI, to show link to parent
+
+OUTPUT.*                          #EXEC.* (PascalCase'd)
+                                  #If JOB_TASK, EXEC.Input|Output is:
+                                  #  - 'OBJ_JSON' if '.sync'
+                                  #  - OBJ if '.sync:2'
+
+                                  ┌──────────────────────────────┐
+                                  │   TASK SERVICE NESTED AUTH   │
+                                  └──────────────────────────────┘
+
+PACTION
+ states:Start[Sync]Execution      #Must be allowed for MACHINE.roleArn on MACHINE2
+
+PACTION states:DescribeExecution  #If JOB_TASK, must be allowed for MACHINE.roleArn on any EXEC of MACHINE2
+ |StopExecution                   #I.e. on 'arn:aws:states:REGION:ACCOUNT_ID:execution:MACHINE2:*'
+PACTION events:PutTargets|PutRule #If JOB_TASK, must be allowed for MACHINE.roleArn
+ |DescribeRule                    #on EventBridge RULE 'StepFunctionsGetEventsForStepFunctionsExecutionRule'
+
+                                  ┌─────────────────────────────┐
+                                  │   TASK SERVICE NESTED IAC   │
+                                  └─────────────────────────────┘
+
+new StepFunctionsStartExecution   #CSTATE_TASK for states:startExecution OPTIMIZED_SERVICE_TASK
+ (...CARGS, OPTS)->CNESTED_TASK   #Automatically allows PACTIONs as described above
+                                  #Cannot set INPUT.???
+
+OPTS.*                            #CSTATE_TASK_OPTS.*
+
+OPTS.stateMachine                 #ICMACHINE. INPUT.StateMachineArn
+OPTS.input                        #CTASK_INPUT (def: '$'). INPUT.Input
+OPTS.associateWithParent          #BOOL (def: false). Adds INPUT.AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID
+                                  #OPTS.input must use TaskInput.fromObject()
+OPTS.name                         #INPUT.Name
 
                                   ┌─────────────────────────────┐
                                   │   TASK SERVICE NESTED SAM   │
@@ -2850,8 +2897,6 @@ ACTIVITY.activityArn              #'ACTIVITY_ARN'. 'arn:aws:states:REGION:ACCOUN
 ACTIVITY.name                     #'ACTIVITY'
                                   #Max 80 chars, [:alnum:]-_
 ACTIVITY.creationDate             #DATE_NUM
-
-DSTATE_TASK.Resource              #'ACTIVITY_ARN'
 
                                   ┌───────────────────────────────┐
                                   │   TASK ACTIVITY DECLARE API   │
@@ -2894,6 +2939,23 @@ ICACTIVITY.activityArn            #'ACTIVITY_ARN'[_STR_TK]
 
 ICMACHINE.grantRead(YGRANTABLE)
  ->CGRANT                         #See above
+
+                                  ┌─────────────────────────┐
+                                  │   TASK ACTIVITY STATE   │
+                                  └─────────────────────────┘
+
+DSTATE_TASK.Resource              #'ACTIVITY_ARN'
+
+                                  ┌─────────────────────────────┐
+                                  │   TASK ACTIVITY STATE IAC   │
+                                  └─────────────────────────────┘
+
+new StepFunctionsInvokeActivity   #CSTATE_TASK that is an ACTIVITY_TASK
+ (...CARGS, OPTS)->CACTIVITY_TASK #Automatically allows kms:* (as described below) if ENCRYPT.kmsKeyId set
+
+OPTS.*                            #CSTATE_TASK_OPTS.*
+
+OPTS.activity                     #ICACTIVITY
 
                                   ┌───────────────────────┐
                                   │   TASK ACTIVITY RUN   │
@@ -3145,13 +3207,10 @@ EXEC.inputDetails|outputDetails
                                   │   ENCRYPTION AUTH   │
                                   └─────────────────────┘
 
-PACTION                           #If ENCRYPT.kmsKeyId, must be allowed on Resource KEY
- kms:Decrypt|GenerateDataKey      #For MACHINE:
-                                  #  - Principal MACHINE.roleArn
-                                  #  - COND_KEY kms:EncryptionContext:aws:states:stateMachineArn MACHINE_ARN
-                                  #For ACTIVITY:
-                                  #  - Principal.Service 'states.amazonaws.com'
-                                  #  - COND_KEY kms:EncryptionContext:aws:states:activityArn ACTIVITY_ARN
+PACTION                           #If ENCRYPT.kmsKeyId, must be allowed for MACHINE.roleArn on Resource KEY
+ kms:Decrypt|GenerateDataKey      #COND_KEY:
+                                  #  - MACHINE: COND_KEY kms:EncryptionContext:aws:states:stateMachineArn MACHINE_ARN
+                                  #  - ACTIVITY: COND_KEY kms:EncryptionContext:aws:states:activityArn ACTIVITY_ARN
 
                                   ┌────────────────────┐
                                   │   ENCRYPTION IAC   │
