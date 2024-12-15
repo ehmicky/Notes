@@ -124,17 +124,222 @@ EMPTY ARRAY ==>                   #If FUNC|operator returns a single item ARR, i
 NESTED ARRAY ==>                  #If FUNC|operator returns an ARR_ARR, it is flattened
 ARR.[...]                         #Like ARR.... but does not flatten
 
-/* COMMENT */: can be inline
+                                  ┌────────────────┐
+                                  │   STATEMENTS   │
+                                  └────────────────┘
 
-(VAL): operator precedence
-  - order is . [] ^ # @ grouping
+/* COMMENT */                     #Can be inline
 
-(VAL;...): evaluates all VALs, returns last one
-  - e.g. VAL can be $VAR assignment
-  - can be inside a FUNC body
+(VAL)                             #Operator precedence
+                                  #Order is . [] ^ # @ grouping
 
-$eval("JSON|JSONATA"[, $])->VAL
-  - def $: current one
+(VAL;...)                         #Evaluates all VALs, returns last one
+                                  #I.e. meant for multiple statements, e.g.:
+                                  #  - inside a FUNC body
+                                  #  - $VAR assignment
+
+BOOL ? VAL : VAL2                 #Implicitely typecast (using $boolean())
+
+$error('MESSAGE')                 #Throws ERROR
+
+$eval('QUERY'[, $$])->VAL         #Evaluate JSONata inside JSONata itself
+                                  #Since JSONata is superset of JSON, can JSON parse too
+                                  #Def $$: current $
+
+                                  ┌───────────────────┐
+                                  │   FUNCTION CALL   │
+                                  └───────────────────┘
+
+$FUNC(...)                        #
+
+VAL.$FUNC(...)                    #Same as $FUNC(VAL, ...)
+                                  #Possible with every built-in FUNC|operator
+                                  #Not possible when VAL is ARR
+                                  #  - since it is ambiguous with ARR iteration
+                                  #Not possible when next argument is passed and it has same type (or subtype) as VAL
+                                  #  - since it is ambiguous
+                                  #  - e.g. NUM.$round(NUM2) or STR.$string(true) (since true is typecastable to STR)
+(VAL).$FUNC(...)                  #Must be used if VAL is literal VAL (except OBJ)
+
+$FUNC(..., ?, ...)->FUNC2         #Bind other arguments
+
+VAL ~> $FUNC[(...)]               #Same as $FUNC(VAL, ...)
+VAL ~> $FUNC ~> $FUNC2[(...)]     #Same as $FUNC2($FUNC(VAL, ...))
+$FUNC ~> $FUNC2                   #Same as function(...) { $FUNC2($FUNC(...), ...) }
+
+                                  ┌─────────────────────┐
+                                  │   FUNCTION DEFINE   │
+                                  └─────────────────────┘
+
+function($ARG,...) { VAL }        #FUNC
+                                  #No ; after VAL
+                                  #Can be called as anonymous FUNC
+                                  #Uses lexical scoping and closure, i.e. can use outer scope's $VAR, including $
+                                  #Can be recursive
+                                  #Can use tail call optimization
+
+$VAR := FUNC
+FUNC(FUNC2, ...)                  #FUNCs are values
+
+QUERY.registerFunction
+ ('FUNC', FUNC[, '<TYPES>'])      #Define $FUNC using JavaScript FUNC
+
+                                  ┌────────────────────┐
+                                  │   FUNCTION TYPES   │
+                                  └────────────────────┘
+
+function(...) <TYPES> { ... }     #Validates input of FUNC. Optional
+                                  #<TYPES> is <T...:T>
+                                  #Each T in left part (concatenated) is ARG type
+                                  #Last T is return type
+                                  #E.g. <a(an):n>
+                                  #T is any of the following
+l                                 #null
+b                                 #BOOL
+n                                 #NUM
+s                                 #STR
+a                                 #ARR
+o                                 #OBJ
+f                                 #FUNC
+u                                 #null|BOOL|NUM|STR
+j                                 #null|BOOL|NUM|STR|ARR|OBJ
+x                                 #null|BOOL|NUM|STR|ARR|OBJ|FUNC
+a<T>                              #ARR of T
+(T...)                            #Union (or)
+T?                                #Optional
+T+                                #Variadic (>=1)
+T-                                #Allows VAL.$FUNC(...) with VAL being this argument
+
+                                  ┌───────────────┐
+                                  │   VARIABLES   │
+                                  └───────────────┘
+
+$VAR := VAL                       #Assignment
+                                  #Assigning:
+                                  #  - $ is a noop
+                                  #  - $$ is possible (but should not)
+QUERY.assign('VAR', VAL)
+QUERY.evaluate
+ (..., {VAR: VAL, ...})           #Assignment from JavaScript
+
+$VAR                              #Referencing
+                                  #If unknown: undefined (no ERROR)
+
+(...)                             #$VAR scope
+OBJ.(...)                         #Can access parent scopes
+function (...) { ... }            #Can set parent scopes, but only shadows them
+
+ARR@$VAR                          #Assigns $VAR with the ARR current iteration's item VAL
+ARR#$VAR                          #Same with item's index
+
+                                  ┌──────────┐
+                                  │   TYPE   │
+                                  └──────────┘
+
+$type(VAL)[->STR]                 #'null|number|string|boolean|array|object|function' or undefined
+
+$exists(VAL)->BOOL                #Not undefined
+
+                                  ┌───────────┐
+                                  │   EQUAL   │
+                                  └───────────┘
+
+VAL = != VAL2                     #Deep equal
+                                  #OBJ keys order not significant, but ARR order significant
+
+BOOL|NUM|STR|null in ARR          #BOOL2
+
+                                  ┌─────────────┐
+                                  │   BOOLEAN   │
+                                  └─────────────┘
+
+VAL.$boolean()->BOOL              #Typecast. false if:
+                                  #  - null
+                                  #  - 0
+                                  #  - empty STR
+                                  #  - empty OBJ
+                                  #  - ARR empty, or with only falsy values
+                                  #  - FUNC
+
+BOOL and BOOL2                    #BOOL3
+BOOL or BOOL2                     #BOOL3
+BOOL.$not()->BOOL2                #Implicitely typecast (using $boolean())
+
+                                  ┌────────────┐
+                                  │   NUMBER   │
+                                  └────────────┘
+
+VAL.$number()->NUM                #Typecast:
+                                  #  - BOOL -> 0|1
+                                  #  - 'NUM' -> NUM
+                                  #  - else error
+
+$formatBase(NUM[, NUM2])->STR     #NUM2 is radix (def 10)
+
+$formatNumber(NUM, 'NUM_FORMAT'
+ [, NUM_FORMAT_OBJ])->STR         #
+$formatInteger(INT, 'NUM_FORMAT')
+ ->STR                            #
+$parseInteger
+ (STR, 'NUM_FORMAT')->INT         #
+NUM_FORMAT                        #XPath format. Not documented yet
+
+NUM < <= > >= NUM2                #BOOL
+
+NUM + - * / % NUM2                #NUM3
+
+NUM.$power(NUM2)->NUM3            #
+NUM.$sqrt()->NUM2                 #
+
+NUM.$abs()->NUM2                  #
+NUM.$floor|$ceil()->NUM2          #
+NUM.$round([NUM2])->NUM3          #NUM2 is number of decimals (can be negative)
+
+$random()->NUM                    #0 to 1, pseudo-random
+
+$min|max(NUM_ARR)->NUM2           #
+$sum|average(NUM_ARR)->NUM2       #
+
+                                  ┌────────────┐
+                                  │   STRING   │
+                                  └────────────┘
+
+VAL.$string([BOOL])->STR          #Typecast using JSON.stringify(VAL)
+                                  #If BOOL true (def false): JSON.stringify(VAL, null, 2)
+                                  #Exceptions:
+                                  #  - Inf|NaN: error
+                                  #  - FUNC: empty STR
+
+STR < <= > >= STR2                #BOOL. Using Unicode codepoint
+
+STR & STR2                        #STR3. Concat. Implicitely typecast (using $string())
+
+STR.$length()->NUM                #NUM of chars
+
+STR.$contains(STR2)->BOOL         #
+STR.$substring(NUM[, NUM2])->STR2 #From index NUM (included)
+                                  #  - can be negative from end
+                                  #For NUM2 chars (def: all)
+STR.$substringBefore(STR2)->STR3  #From beginning to first occurence of STR2 (excluded) (if any)
+STR.$substringAfter(STR2)->STR3   #From first occurence of STR2 (excluded) (if any) to end
+
+STR.$uppercase|$lowercase()->STR2 #
+STR.$trim()->STR2                 #Trim whitespaces
+                                  #Also squash multiple whitespaces into single spaces
+STR.$pad(NUM[, 'CHAR'])->STR2     #Pad to right, if needed, using CHAR (def: space)
+                                  #Pad to left if NUM negative
+
+$join(STR_ARR[, STR2])->STR3      #Def STR2: ''
+STR.$split(STR2|REGEXP[, NUM])    #STR2 can be empty, to split char by char
+ ->STR3_ARR                       #NUM truncates resulting ARR length
+
+STR.$base64encode|encode()->STR2  #
+STR.$encode|decodeUrl[Component]()
+ ->STR2                           #
+
+                                  ┌────────────┐
+                                  │   OBJECT   │
+                                  └────────────┘
 
 OBJ.VAR
 OBJ.`VAR`: same but escape characters
@@ -157,17 +362,31 @@ OBJ_ARR{KEY: VAL,...}:
   - if result is passed as an ARR argument to a $FUNC(), must wrap VAL with $(...)
      - i.e. OBJ_ARR{KEY: $FUNC($.(VAL)),...}
 
+| VAL | OBJ[, "PROP"[_ARR]] |
+  - FUNC(OBJ2) which returns OBJ2 but with:
+    - $merge(OBJ2.(VAL), OBJ) at OBJ2.(VAL)
+    - deletions of PROPs at OBJ2.(VAL)
+  - $ in OBJ and "PROP" is relative to OBJ2.(VAL)
+    - this allows transforming instead of just setting
+  - usually called as OBJ2 ~> | QUERY | OBJ |
+
 OBJ.$keys()->'VAR'_ARR: unique
 OBJ.$spread()->OBJ2_ARR: each OBJ2 contains single key|value
 $merge(OBJ_ARR)->OBJ. Shallow merge
 OBJ.$each(FUNC(VAL, 'VAR')->VAL2)->VAL2_ARR. Maps
 OBJ.$sift(FUNC(VAL, 'VAR', OBJ)->BOOL)->OBJ: only include VARs that return true
 
+                                  ┌───────────┐
+                                  │   ARRAY   │
+                                  └───────────┘
+
 ARR[NUM]->VAL: 0-based. Can be negative (from end). Can be float (rounded down).
+
 ARR[NUM_ARR]->ARR2
 [NUM..NUM2[, ...]]->NUM3_ARR
   - from NUM (included) to NUM2 (included)
   - can concat several ones using ...
+
 ARR[BOOL]->ARR2
   - filters
   - arg typecast to BOOL
@@ -191,65 +410,9 @@ $filter(ARR, FUNC(VAL, NUM, ARR)->BOOL)->ARR2
 $single(ARR, FUNC(VAL, NUM, ARR)->BOOL)->VAL: like $filter(...)[0] but throws if less|more than one match
 $reduce(ARR, FUNC(MEMO, VAL, NUM, ARR)->MEMO[, MEMO])->ARR2. Def MEMO: first VAL
 
-$type(VAL)[->STR]. 'null|number|string|boolean|array|object|function' or undefined
-
-$exists(VAL)->BOOL: not undefined
-
-VAL = != VAL2
-  - deep equal
-  - OBJ keys order not significant, but ARR order significant
-BOOL|NUM|STR|null in ARR
-
-BOOL and BOOL2
-BOOL or BOOL2
-BOOL.$not(): typecast to BOOL
-BOOL ? VAL : VAL2. typecast to BOOL
-VAL.$boolean()->BOOL: false if false, empty STR|ARR|OBJ, 0, null, FUNC, ARR with only falsy values
-
-VAL & VAL2: STR concat. Typecast to STR with $string()
-STR < <= > >= STR2: by Unicode codepoint
-VAL.$string([BOOL])->STR
-  - Inf|NaN: error
-  - FUNC: empty STR
-  - else: JSON.stringify(VAL)
-     - if BOOL true (def false): JSON.stringify(VAL, null, 2)
-STR.$length()->NUM: NUM of chars
-STR.$contains(STR2)->BOOL
-STR.$substring(NUM[, NUM2])->STR2: from index NUM (included) (can be negative from end), for NUM2 chars (def all)
-STR.$substringBefore(STR2)->STR3: from beginning to first occurence of STR2 (excluded) (if any)
-STR.$substringAfter(STR2)->STR3: from first occurence of STR2 (excluded) (if any) to end
-STR.$uppercase|$lowercase()->STR2
-STR.$trim()->STR2: trim whitespaces. Also squash multiple whitespaces into single spaces.
-STR.$pad(NUM[, 'CHAR']): pad to right (of left if NUM negative), if needed, using CHAR (def: space)
-STR.$split(STR2|REGEXP[, NUM])->STR3_ARR
-  - STR2 can be empty, to split char by char
-  - NUM truncates resulting ARR length
-$join(STR_ARR[, STR2])->STR3: def STR2 is ''
-
-STR.$base64encode|encode()->STR2
-STR.$encode|decodeUrl[Component]->STR2
-
-VAL.$number()->NUM
-  - 'NUM' -> NUM
-  - BOOL -> 0|1
-  - else error
-$formatBase(NUM[, NUM2])->STR. NUM2 is radix (def 10)
-$parseInteger(STR, 'FORMAT')->INT
-$formatNumber(NUM, 'FORMAT'[, NUM_FORMAT_OBJ])->STR
-$formatInteger(INT, 'FORMAT')->STR
-NUM_FORMAT: XPath format. Not documented yet
-
-NUM + - * / % NUM2
-NUM < <= > >= NUM2
-NUM.$power(NUM2)->NUM3
-NUM.$sqrt()->NUM2
-NUM.$abs()->NUM2
-NUM.$floor|$ceil()->NUM2
-NUM.$round([NUM2])->NUM3: NUM2 is number of decimals (can be negative).
-$random()->NUM: 0 to 1, pseudo-random
-
-$min|max(NUM_ARR)->NUM2
-$sum|average(NUM_ARR)->NUM2
+                                  ┌────────────┐
+                                  │   REGEXP   │
+                                  └────────────┘
 
 /REGEXP/[FLAGS]: REGEXP. Not a STR, i.e. no quotes. FLAGS i or m.
 REGEXP is actually a FUNC, as follows
@@ -269,6 +432,10 @@ STR.$replace(STR2|REGEXP, STR3|FUNC(MATCH_OBJ)->STR4[, NUM]):
   - STR3 can use $0 (whole match), $NUM (parenthesis groups), $$ (escaped $)
   - NUM truncates NUM of replacements
 
+                                  ┌──────────┐
+                                  │   DATE   │
+                                  └──────────┘
+
 "DATE": "YYYY-MM-DDThh:mm:ssZ"
 $now() and $millis(): same DATE inside same QUERY
 $now(['DATE_FORMAT'[, 'TZ']])->"DATE"
@@ -278,67 +445,8 @@ DATE_NUM.$fromMillis(['DATE_FORMAT'[, 'TZ']])->'DATE'
 DATE_FORMAT (def: ISO 8601): not documented yet
 TZ: def UTC
 
-| VAL | OBJ[, "PROP"[_ARR]] |
-  - FUNC(OBJ2) which returns OBJ2 but with:
-    - $merge(OBJ2.(VAL), OBJ) at OBJ2.(VAL)
-    - deletions of PROPs at OBJ2.(VAL)
-  - $ in OBJ and "PROP" is relative to OBJ2.(VAL)
-    - this allows transforming instead of just setting
-  - usually called as OBJ2 ~> | QUERY | OBJ |
-
-(...)
-  - creates scope for $VARs
-  - including OBJ.(...)
-  - can access parent scopes
-  - can set parent scopes, but only shadows them
-$VAR := VAL: assignment
-  - assigning $ is a noop
-  - $$ can be set (but should not)
-$VAR: using it
-  - if unknown: undefined (no error)
-ARR#$VAR: assigns $VAR with the index NUM of ARR current iteration
-ARR@$VAR: same with value
-QUERY.evaluate(..., {VAR: VAL, ...})
-QUERY.assign('VAR', VAL)
-
-function($ARG,...) [TYPES] { VAL }
-  - FUNC
-  - is a value
-  - can be assigned to $VAR
-  - can be passed as argument
-  - can be called as anonymous FUNC
-  - uses lexical scoping and closure, i.e. can use outer scope's $VAR, including $.
-  - can be recursive
-     - can use tail call optimization
-VAL.$FUNC(...)
-  - possible with every built-in $FUNC or operator
-     - except $string|$round() with second argument set
-  - not possible when first argument is ARR, since it is ambiguous with ARR iteration
-  - can always also run as $FUNC(VAL, ...)
-(VAL).$FUNC(...): must be used if VAL is literal VAL (except OBJ or non-empty ARR)
-TYPES is <T...:T> where first part is concatenation of ARG types, and second is return type. E.g. <a(an):n>
-  - optional: only adds input validation
-T is:
-  - one of l (null), b (BOOL), n (NUM), s (STR), a (ARR) o (OBJ), f (FUNC), u (any but ARR|OBJ|FUNC), j (any but FUNC), x (any)
-  - a<T> (ARR of T)
-  - (T...): union (or)
-  - T?: optional
-  - T+: variadic (>=1)
-  - T-: allows VAL.$FUNC(...) with VAL being this argument
-$FUNC(..., ?, ...)->FUNC2: bind other arguments
-VAL ~> $FUNC[(...)]: same as $FUNC(VAL, ...)
-VAL ~> $FUNC ~> $FUNC2[(...)]: same as $FUNC2($FUNC(VAL, ...))
-$FUNC ~> $FUNC2: same as function(...) { $FUNC2($FUNC(...), ...) }
-
-QUERY.registerFunction('FUNC', FUNC[, '<TYPES>']): same as QUERY.assign() except can specify TYPES
-
-$error('MESSAGE'): throw ERROR
-
 VSCode extension: exists for JSONata
 
 https://github.com/Stedi/prettier-plugin-jsonata
 
 Add alternatives with jsonpath, jmespath, etc.???
-
-https://docs.aws.amazon.com/step-functions/latest/dg/transforming-data.html#jsonata-functions-provided-by-sfn
-  - document in "TODO" in Step Functions doc
