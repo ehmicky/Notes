@@ -3789,3 +3789,77 @@ AWS::Serverless::StateMachine     #Includes RESPROPs:
                                   #  - PropagateTags BOOL: whether Tags targets:
                                   #     - false (def): MACHINE
                                   #     - true: all generated RESOURCEs
+
+                                  ┌─────────────────┐
+                                  │   API GATEWAY   │
+                                  └─────────────────┘
+
+INTEGRATION.integrationSubtype   -#Can be 'StepFunctions-Start[Sync]Execution|StopExecution'
+                                  #I.e. first-class INTEGRATION (see API Gateway doc)
+
+                                  ┌─────────────────────┐
+                                  │   API GATEWAY IAC   │
+                                  └─────────────────────┘
+
+new HttpStepFunctionsIntegration -#CINTEGRATION with:
+ ('CONSTRUCT'                     #  - INTEGRATION.type 'AWS_PROXY'
+ [, CSTEP_INTEGRATION_OPTS])      #  - INTEGRATION.subtype 'StepFunctions-...' (i.e. first-class)
+                                  #     - def: 'StepFunctions-StartExecution'
+                                  #INTEGRATION.credentials is a new ROLE
+                                  #  - assumabled by Service.Principal 'apigateway.amazonaws.com'
+                                  #  - allowed PACTION 'states:...Execution' to MACHINE
+CSTEP_INTEGRATION_OPTS
+ .stateMachine                   -#ICMACHINE
+
+PARAMS.*                         -#Passed as EXEC.*
+                                  #No need to set EXEC.StateMachineArn: automatically set
+                                  #If StopExecution(), should set CSTEP_INTEGRATION_OPTS.parameterMapping with:
+                                  #  new ParameterMapping().custom('ExecutionArn', '$request.querystring.executionArn')
+
+new StepFunctionsRestApi         =#Like new RestApi(...) but with CAPI_OPTS.defaultIntegration StepFunctionsIntegration.startExecution()
+ (...CARGS, OPTS)                 #Uses 'ANY' HTTP_METHOD
+OPTS.*                           =#CAPI_OPTS.*
+OPTS.*                           =#CSTEP_INTEGRATION_OPTS.*
+                                  #CSTEP_INTEGRATION_OPTS.credentialsRole -> OPTS.role
+OPTS.stateMachine                =#ICMACHINE
+
+StepFunctionsIntegration         =#CINTEGRATION with:
+ .startExecution(ICMACHINE        #  - INTEGRATION.type 'AWS_PROXY'
+ [, CSTEP_INTEGRATION_OPTS])      #  - INTEGRATION.uri for StartSyncExecution()
+                                  #INTEGRATION.credentials is a new ROLE
+                                  #  - assumabled by Service.Principal 'apigateway.amazonaws.com'
+                                  #  - allowed PACTION 'states:StartSyncExecution' to MACHINE
+
+INTEGRATION.requestTemplates     =#Automatically set to pass following INPUT.*
+INPUT.path.PATHVAR               =#'VAL'
+                                  #Only if OPTS.path true (def)
+INPUT.header                     =#HEADERS_OBJ
+                                  #Only if OPTS.headers true (def: false)
+INPUT.querystring                =#QUERY_OBJ
+                                  #Only if OPTS.querystring true (def)
+INPUT.body                       =#JSON VAL. Request body
+INPUT.authorizer                 =#CONTEXT.authorizer
+                                  #Only if OPTS.authorizer true (def: false)
+INPUT.requestContext.VAR         =#CONTEXT.VAR2
+                                  #Only if OPTS.requestContext.VAR true (def: false)
+                                  #'VAR2' is 'VAR' as is except
+                                  #  - identity.VAR -> VAR
+                                  #  - authorizer.principalId -> authorizerPrincipalId
+                                  #Some VARs not available, see source code at:
+                                  #  https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-apigateway/lib/integrations/stepfunctions.ts#L300
+
+IRESPS ==>                       =#Automatically set:
+                                  #  - 200: OUTPUT
+                                  #  - 400: {error: 'Bad request!'}
+                                  #  - 500: ERROR_OUTPUT
+                                  #     - including if EXEC failed
+                                  #All with Content-Type: application/json [S]
+                                  #Sets INTEGRATION.passthroughBehavior 'NEVER'
+
+RRESPS ==>                       =#Automatically set for 200|400|500 with Content-Type: application/json [S]
+                                  #Only if OPTS.useDefaultMethodResponses true (def)
+
+DEPLOYMENT ==>                   =#New DEPLOYMENT when the following changes:
+                                  #  - CMACHINE: 'MACHINE' name
+                                  #  - ICMACHINE: MACHINE 'NID'
+                                  #Unless CAPI_OPTS.deploy false
