@@ -7,9 +7,8 @@ VERSION ==>                       #2024-11-28
 
 TODO:
   - CDK:
-     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions-tasks/lib/http/invoke.ts
      - Lambda:
-        - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks/lib/lambda
+        - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions-tasks/lib/lambda/invoke.ts
            - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks#lambda
         - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-stepfunctions-tasks/lib/evaluate-expression.ts
            - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/aws-stepfunctions-tasks#evaluate-expression
@@ -2400,8 +2399,18 @@ new HttpInvoke(...CARGS[, OPTS])  #CSTATE_TASK that is an HTTP_TASK
 
 OPTS.*                            #CSTATE_TASK_OPTS.*
 
-OPTS.connection???
-OPTS.apiRoot???
+OPTS.apiRoot                      #'ORIGIN' of INPUT.ApiEndpoint
+OPTS.apiEndpoint                  #'PATH' of INPUT.ApiEndpoint, as CTASK_INPUT
+OPTS.method                       #INPUT.Method, as CTASK_INPUT
+OPTS.headers                      #INPUT.Headers, as CTASK_INPUT
+OPTS.queryStringParameters        #INPUT.QueryParameters, as CTASK_INPUT
+
+OPTS.body                         #INPUT.RequestBody, as CTASK_INPUT
+OPTS.urlEncodingFormat            #STR. Either:
+                                  #  - INPUT.Transform.RequestBodyEncoding 'NONE'
+                                  #  - INPUT.Transform.RequestEncodingOptions or 'DEFAULT' (same as 'INDICES')
+
+OPTS.connection                   #EventBridge ICONNECTION. INPUT.Authentication.ConnectionArn
 
                                   ┌───────────────────────┐
                                   │   TASK HTTP LOGGING   │
@@ -2479,6 +2488,18 @@ INPUT.*                           #SERVICE_TASK_ACTION-specific, but usually mos
 
 OUTPUT.*                          #Same for ACTION's RES.*
 
+                                  ┌────────────────────────────────┐
+                                  │   TASK SERVICE OPTIMIZED IAC   │
+                                  └────────────────────────────────┘
+
+new CLASS(...CARGS[, OPTS])       #CSTATE_TASK that is an OPTIMIZED_SERVICE_TASK
+ ->C..._TASK                      #SERVICE_TASK_ACTION-specific, documented in their respective docs
+
+OPTS.*                            #CSTATE_TASK_OPTS.*
+
+OPTS.*                            #Converted to INPUT.*
+                                 $#Can always be DFEXPRs
+
                                   ┌─────────────────────┐
                                   │   TASK SERVICE UI   │
                                   └─────────────────────┘
@@ -2529,9 +2550,19 @@ DVAR ServiceIntegrationResourceArn#DSTATE_TASK.Resource. With AWS/States/Service
                                   │   TASK LAMBDA   │
                                   └─────────────────┘
 
-lambda:invoke                     #OPTIMIZED_SERVICE_TASK calling Invoke()
+DSTATE_TASK.Resource              #'FUNC_VERSION_ARN'. LAMBDA_TASK, i.e. OPTIMIZED_SERVICE_TASK calling Invoke()
+                                  #Cannot be ASYNC_TASK nor JOB_TASK
+INPUT                             #INVOCATION_REQ.Payload, as OBJ_ARR
+OUTPUT                            #INVOCATION_RES.ResponseBody, as OBJ_ARR
+
+OPTS.payloadResponseOnly          #BOOL (def: false). Use DSTATE_TASK.Resource 'FUNC_VERSION_ARN' instead of SERVICE_TASK_ACTION lambda:invoke
+OPTS.qualifier                    #
+OPTS.invocationType               #
+OPTS.clientContext                #
+
+SERVICE_TASK_ACTION lambda:invoke #Same but with different INPUT|OUTPUT, to set any INVOCATION_REQ|INVOCATION_RES.*
+                                  #Also, can be ASYNC_TASK (but not JOB_TASK)
                                   #Cannot use INVOCATION_RES.LogResult nor InvokeWithResponseStream()
-                                  #Can be ASYNC_TASK but not JOB_TASK
 
 INPUT.FunctionName                #'FUNC_ARN' of INVOCATION_REQ.FunctionArn
 INPUT.Qualifier                   #'QUALIFIER' of INVOCATION_REQ.FunctionArn
@@ -2539,7 +2570,7 @@ INPUT.InvocationType              #INVOCATION_REQ.InvocationType (def: 'RequestR
 INPUT.Payload                     #INVOCATION_REQ.Payload, as OBJ|ARR
 INPUT.ClientContext               #INVOCATION_REQ.ClientContext, as OBJ|ARR
 
-OUTPUT.Payload                    #INVOCATION_RES.ResponseBody
+OUTPUT.Payload                    #INVOCATION_RES.ResponseBody, as OBJ|ARR
 OUTPUT.StatusCode|ExecutedVersion #INVOCATION_RES.*
 OUTPUT
  .SdkResponseMetadata.RequestId   #'REQ_ID'
@@ -2547,11 +2578,31 @@ OUTPUT.SdkHttpMetadata.HttpHeaders#HEADERS_OBJ
 
 ERROR_OUTPUT                      #On invocation|FUNCTION error
 
+EVENT_TYPE LambdaFunctionScheduled#Like EVENT_TYPE Task*
+EVENT_INFO.resource               #'FUNC_ARN'
+                                  #With EVENT_TYPE LambdaFunctionScheduled
+EVENT_TYPE
+ LambdaFunctionScheduleFailed
+EVENT_TYPE LambdaFunctionStarted
+EVENT_TYPE
+ LambdaFunctionStartFailed
+EVENT_TYPE LambdaFunctionSucceeded
+EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task*
+
                                   ┌──────────────────────┐
                                   │   TASK LAMBDA AUTH   │
                                   └──────────────────────┘
 
 PACTION lambda:InvokeFunction     #Must be allowed for MACHINE.roleArn
+
+                                  ┌─────────────────────┐
+                                  │   TASK LAMBDA IAC   │
+                                  └─────────────────────┘
+
+new LambdaInvoke(...CARGS[, OPTS])#CSTATE_TASK that is a LAMBDA_TASK
+ ->CLAMBDA_TASK                   #Automatically allows PACTIONs as described above
+
+OPTS.*                            #CSTATE_TASK_OPTS.*
 
                                   ┌─────────────────────┐
                                   │   TASK LAMBDA SAM   │
@@ -2572,30 +2623,9 @@ AWS::Serverless::Connector        #Can be used with:
 MACHINE ENHANCED COMPONENT ==>    #Can use Lambda FUNCTION as source
                                   #Adds POLICYs and pass identifiers as ENVVARs to FUNCTION
 
-                                  ┌──────────────────────┐
-                                  │   TASK LAMBDA CORE   │
-                                  └──────────────────────┘
-
-DSTATE_TASK.Resource              #'FUNC_VERSION_ARN'. LAMBDA_TASK
-                                  #Same as SERVICE_TASK_ACTION 'lambda:invoke' except:
-                                  #  - no SERVICE_TASK_PATTERN
-                                  #  - OUTPUT is INVOCATION_RES.ResponseBody
-                                  #  - emits its own EVENTs and METRICs
-
-EVENT_TYPE LambdaFunctionScheduled#Like EVENT_TYPE Task*
-EVENT_INFO.resource               #'FUNC_ARN'
-                                  #With EVENT_TYPE LambdaFunctionScheduled
-EVENT_TYPE
- LambdaFunctionScheduleFailed
-EVENT_TYPE LambdaFunctionStarted
-EVENT_TYPE
- LambdaFunctionStartFailed
-EVENT_TYPE LambdaFunctionSucceeded
-EVENT_TYPE LambdaFunctionFailed   #Like EVENT_TYPE Task*
-
-                                  ┌──────────────────────────────┐
-                                  │   TASK LAMBDA CORE METRICS   │
-                                  └──────────────────────────────┘
+                                  ┌─────────────────────────┐
+                                  │   TASK LAMBDA METRICS   │
+                                  └─────────────────────────┘
 
 AWS/States/LambdaFunctionRunTime  #Duration (in ms) of LAMBDA_TASKs
 AWS/States/
@@ -2611,9 +2641,9 @@ AWS/States/LambdaFunctionsFailed  #NUM of LAMBDA_TASKs failed
 
 DVAR LambdaFunctionArn            #'FUNC_ARN'. With AWS/States/LambdaFunction*
 
-                                  ┌──────────────────────────────────┐
-                                  │   TASK LAMBDA CORE METRICS IAC   │
-                                  └──────────────────────────────────┘
+                                  ┌─────────────────────────────┐
+                                  │   TASK LAMBDA METRICS IAC   │
+                                  └─────────────────────────────┘
 
 CLAMBDA_TASK.metric
  ('METRIC'[, CMETRIC_OPTS])
