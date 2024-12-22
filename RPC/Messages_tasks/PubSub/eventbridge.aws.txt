@@ -55,7 +55,9 @@ TODO EventBridge Rule:
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-bus.html
      - stopped at: Rules > Setting a rule schedule
      - already read:
-        - Security > Data protection > Encryption at rest > Encrypting events > DLQs for encrypting events
+        - Security:
+           - Data protection > Encryption at rest > Encrypting events > DLQs for encrypting events
+           - IAM > Using service-linked roles
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-integrations.html
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-monitoring.html
   - https://docs.aws.amazon.com/eventbridge/latest/onboarding/amazon_eventbridge_partner_onboarding_guide.html
@@ -133,6 +135,13 @@ PRICING ==>                       #1$ per 1e6 EVENTs
                                   #1$ per 43GB stored in ARCHIVEs
                                   #  - i.e. same as S3
                                   #1$ per 10GB re-emitted in REPLAYs
+
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonEventBridgeFullAccess       #AWS managed POLICY. Grants all 'events|pipes|scheduler|schemas:*' PACTIONs
+AmazonEventBridgeReadOnlyAccess   #AWS managed POLICY. Grants all readonly 'events|pipes|scheduler|schemas:*' PACTIONs
 
                                   ┌─────────┐
                                   │   BUS   │
@@ -407,11 +416,6 @@ RULE.EventBusName                 #In input: 'BUS[_ARN]' (def: default BUS)
 RULE.CreatedBy                    #'ACCOUNT_ID' which created the RULE
                                   #Might differ from RULE's ACCOUNT, if a cross-ACCOUNT PutRule() was done
 
-RULE.ManagedBy                    #'SERVICE'. If RULE created by an AWS SERVICE
-                                  #Different from integrated RULEs
-                                  #SERVICE automatically creates the POLICY to allow sending to EventBridge
-RULE|TARGET.Force                 #BOOL. If false (def), do not allow deleting if RULE is SERVICE-managed
-
 RULE.State                        #One of:
                                   #  - 'DISABLED'
                                   #  - 'ENABLED'
@@ -427,7 +431,6 @@ RULE.RoleArn                      #'ROLE_ARN' assumed by the RULE
                                   #Def: use current PRINCIPAL
 
 COND_KEY events:creatorAccount    #RULE.CreatedBy. For Put|Enable|Disable|Delete|DescribeRule(), Put|RemoveTargets|ListTargetsByRule(), *Tag*()
-COND_KEY events:ManagedBy         #RULE.ManagedBy. For Put|Enable|Disable|DeleteRule() and Put|RemoveTargets()
 
                                   ┌──────────────┐
                                   │   RULE API   │
@@ -466,6 +469,21 @@ GENERATE TEMPLATE ==>             #In UI, can generate CloudTemplate template fr
 
 AWS::Events::Rule                 #RESPROPs: Name, Description, EventBusName, State, ScheduleExpression, RoleArn
                                   #RESATTRs: Arn
+
+                                  ┌──────────────────┐
+                                  │   RULE MANAGED   │
+                                  └──────────────────┘
+
+RULE.ManagedBy                    #'SERVICE'. If RULE created by an AWS SERVICE
+                                  #Different from integrated RULEs
+                                  #SERVICE automatically creates the POLICY to allow sending to EventBridge
+RULE|TARGET.Force                 #BOOL. If false (def), do not allow deleting if RULE is SERVICE-managed
+
+                                  ┌───────────────────────┐
+                                  │   RULE MANAGED AUTH   │
+                                  └───────────────────────┘
+
+COND_KEY events:ManagedBy         #RULE.ManagedBy. For Put|Enable|Disable|DeleteRule() and Put|RemoveTargets()
 
                                   ┌─────────────┐
                                   │   PATTERN   │
@@ -916,6 +934,7 @@ CONN_OAUTH.ClientParameters
 CONN_OAUTH.OAuthHttpParameters    #CONN_PARAMS
 
 CONN.SecretArn                    #Secrets Manager 'SECRET_ARN' encrypting CONN.* at rest
+                                  #Named 'events!connection/...'
 CONN_PARAM.IsValueSecret          #BOOL (def: false). Encrypt using CONN.SecretArn
 
                                   ┌─────────────────────────────────┐
@@ -924,6 +943,18 @@ CONN_PARAM.IsValueSecret          #BOOL (def: false). Encrypt using CONN.SecretA
 
 PACTION actions
  :RetrieveConnectionCredentials   #Allow reading CONN.SecretArn
+
+aws-service-role/                 #SERVICE_LINKED_ROLE used by API_DEST to allow it writing|reading CONN.SecretArn
+ AWSServiceRoleForAmazon          #Automatically created when using a CONN
+ EventBridgeApiDestinations       #  - providing has PACTIONs iam:CreateServiceLinkedRole for that ROLE
+                                  #     - COND_KEY iam:AWSServiceName 'apidestinations.events.amazonaws.com'
+
+AmazonEventBridgeApiDestinations  #AWS managed POLICY used by AWSServiceRoleForAmazonEventBridgeApiDestinations. Allows:
+ ServiceRolePolicy                #  - secretsmanager:Create|Update|Describe|DeleteSecret(), Put|GetSecretValue()
+                                  #  - on SECRET 'events!connection/*'
+
+AmazonEventBridgeFullAccess       #Includes same permissions as above
+                                  #Also includes iam:CreateServiceLinkedRole on above ROLE
 
                                   ┌────────────────────────────────┐
                                   │   CONNECTION AUTH PARAMS IAC   │
@@ -1295,6 +1326,16 @@ PRICING ==>                       #1$ per 2.5e6 EVENTs
                                   #  - multiplied by NUM of 64KB chunks
 
                                   ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonEventBridgePipesFullAccess  #AWS managed POLICY. Grants all 'pipes:*' PACTIONs
+AmazonEventBridgePipes
+ OperatorAccess                   #AWS managed POLICY. Grants Start|Stop|List|DescribePipe() + ListTagsForResource()
+AmazonEventBridgePipes
+ ReadOnlyAccess                   #AWS managed POLICY. Grants all readonly 'pipes:*' PACTIONs
+
+                                  ┌──────────┐
                                   │   PIPE   │
                                   └──────────┘
 
@@ -1562,6 +1603,15 @@ THROTTLING ==>                    #1e3/s (REGION-specific) (soft): TARGET calls
                                   #50/s (soft): ListSchedules()
                                   #10/s (soft): Create|List|Get|DeleteScheduleGroup(), ListTagsForResource()
                                   #1/s (soft): [Un]tagResource()
+
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonEventBridgeScheduler
+ FullAccess                       #AWS managed POLICY. Grants all 'scheduler:*' PACTIONs
+AmazonEventBridgeScheduler
+ ReadOnlyAccess                   #AWS managed POLICY. Grants all readonly 'scheduler:*' PACTIONs
 
                                   ┌───────────┐
                                   │   GROUP   │
@@ -1843,6 +1893,14 @@ PRICING ==>                       #REGISTRYs|SCHEMAs: free
                                   #  - multiplied by NUM of 8KB chunks
                                   #  - free: 5e6/month
 
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonEventBridgeSchemasFullAccess#AWS managed POLICY. Grants all 'schemas:*' PACTIONs
+AmazonEventBridgeSchemas
+ ReadOnlyAccess                   #AWS managed POLICY. Grants all readonly 'schemas:*' PACTIONs
+
                                   ┌──────────────┐
                                   │   REGISTRY   │
                                   └──────────────┘
@@ -2015,6 +2073,7 @@ AWS::EventSchemas::Schema         #RESATTRs: SchemaVersion, VersionCreatedDate
 
 DISCOVERER                        #Create|infer SCHEMAs from a BUS's EVENTs
                                   #Not if BUS.KmsKeyIdentifier set
+                                  #Under-the-hood, creates RULEs named '*Schemas-*'
                                   #Max 10 (soft) per REGION|ACCOUNT
 DISCOVERER.DiscovererArn          #'DISCOVERER_ARN'. 'arn:aws:schemas:REGION:ACCOUNT_ID:discoverer/DISCOVERER_MID'
 DISCOVERER.DiscovererId           #'DISCOVERER_MID'
@@ -2026,6 +2085,25 @@ DISCOVERER.SourceArn              #'BUS_ARN'
 
 DISCOVERER.CrossAccount           #BOOL (def: true)
                                   #If false, do not look for EVENTs sent to the BUS from another ACCOUNT
+
+                                  #Always named '...Schemas-...'
+
+                                  ┌─────────────────────┐
+                                  │   DISCOVERER AUTH   │
+                                  └─────────────────────┘
+
+aws-service-role/                 #SERVICE_LINKED_ROLE used by DISCOVERER
+ schemas.amazonaws.com/           #Automatically created by DISCOVERER
+ AWSServiceRoleForSchemas         #  - providing has PACTIONs iam:CreateServiceLinkedRole for that ROLE
+                                  #     - COND_KEY iam:AWSServiceName 'schemas.amazonaws.com'
+
+AmazonEventBridgeSchemas          #AWS managed POLICY used by AWSServiceRoleForSchemas. Allows:
+ ServiceRolePolicy                #  - Put|Enable|Disable|DeleteRule(), Put|RemoveTargets() and ListTargetsByRule()
+                                  #  - on RULEs '*Schemas-*'
+
+AmazonEventBridgeSchemasFullAccess#Includes same permissions as above
+                                  #Also includes iam:CreateServiceLinkedRole on above ROLE
+AmazonEventBridgeFullAccess       #Same
 
                                   ┌────────────────────┐
                                   │   DISCOVERER API   │
