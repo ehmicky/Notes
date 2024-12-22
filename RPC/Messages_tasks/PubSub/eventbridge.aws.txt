@@ -7,8 +7,8 @@ VERSION ==>                       #2024-12-20
 
 TODO EventBridge Rule:
   - go through new_services doc
+     - stopped at: https://docs.aws.amazon.com/aws-managed-policy/latest/reference/policy-list.html
      - already done:
-        - https://docs.aws.amazon.com/service-authorization/latest/reference/reference_policies_actions-resources-contextkeys.html
         - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html
   - CloudWatch Events
   - CDK:
@@ -60,6 +60,7 @@ TODO EventBridge Rule:
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-monitoring.html
   - https://docs.aws.amazon.com/eventbridge/latest/onboarding/amazon_eventbridge_partner_onboarding_guide.html
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-service-management-event-list.html
+  - https://aws.amazon.com/eventbridge/faqs
 
 TODO EventBridge Pipes:
   - SQS: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/eb-pipes-integration.html
@@ -93,6 +94,7 @@ TODO EventBridge Schemas:
 TODO all:
   - move SERVICE-specific docs in their respective docs (at the bottom)
   - break down this doc into 4: rules, pipes, scheduler, schemas
+     - put in the right places in my Notes directories
   - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-what-is.html
      - already read:
         - Event patterns
@@ -113,12 +115,32 @@ PAGINATION ==>                    #Uses REQ.Limit (def|max: 100) + REQ|RES.NextT
                                   #ListEndpoints: named REQ.MaxResults instead
                                   #No pagination: ListTagsForResource()
 
+THROTTLING ==>                    #2e4/s (REGION-specific) (soft): TARGET call
+                                  #1e4/s (REGION-specific) (soft): PutEvents()
+                                  #300/s (soft): API_DEST call
+                                  #50/s (soft): other API calls
+                                  #5/s: Create|Update|DeleteEndpoint()
+
+PRICING ==>                       #1$ per 1e6 EVENTs
+                                  #  - only ones matching FILTERS
+                                  #  - multiplied by NUM of 64KB chunks
+                                  #  - free: EVENTs sent by AWS SERVICEs
+                                  #     - CloudTrail: management EVENTs only
+                                  #1$ per 1e6 TARGET call
+                                  #  - free: if same ACCOUNT
+                                  #1$ per 5e6 API_DEST call
+                                  #  - multiplied by NUM of 64KB chunks
+                                  #1$ per 43GB stored in ARCHIVEs
+                                  #  - i.e. same as S3
+                                  #1$ per 10GB re-emitted in REPLAYs
+
                                   ┌─────────┐
                                   │   BUS   │
                                   └─────────┘
 
 BUS                               #Group that receives EVENTs and sends them to targets
                                   #Cannot delete if it has some RULEs
+                                  #Max 100 (soft) per ACCOUNT
 
 BUS.Arn                           #'BUS_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:event-bus/BUS'
 BUS.Name                          #'BUS' (def: 'default' with DescribeEventBus())
@@ -455,7 +477,7 @@ FILTERS                           #Ignores EVENTs that do not match
                                   #Matched against GEVENT shape
                                   #Should be as precise as possible
                                   #  - including matching GEVENT.account|region
-                                  #Max 4KB
+                                  #Max 4KB (soft)
 
 FILTERS.*                         #And'd, i.e. must all match
 
@@ -658,7 +680,8 @@ BUS.DeadLetterConfig.Arn          #'SQS_QUEUE_ARN' to send EVENTs when encryptin
                                   #  - recommended then
 
 TARGET.DeadLetterConfig.Arn       #'SQS_QUEUE_ARN' to send failed EVENTs when could not send to TARGET
-                                  #Also when request waited 24h due to API_DEST.InvocationRateLimitPerSecond
+                                  #Also when request waited 24h due to throttling
+                                  #  - including through API_DEST.InvocationRateLimitPerSecond
                                   #Recommended
 
 BUG|TARGET.DeadLetterConfig.Arn   #Retries are done first
@@ -696,6 +719,7 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: DeadLetterConf
                                   └──────────────────────┘
 
 API_DEST                          #TARGET that makes a HTTP request
+                                  #Max 3e3 (soft) per REGION|ACCOUNT
 API_DEST.ApiDestinationArn        #'API_DEST_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:api-destination/API_DEST'
 API_DEST.Name                     #'API_DEST'
                                   #Must be [:alnum:].-, max 64 chars
@@ -709,8 +733,8 @@ API_DEST.HttpMethod               #'HTTP_METHOD', uppercased
 API_DEST.InvocationEndpoint       #'https://...'
                                   #Max 2KB
 
-API_DEST                          #NUM (def: 5m). Max NUM requests per second.
- .InvocationRateLimitPerSecond    #Throttled requests automatically wait up to 24h
+API_DEST
+ .InvocationRateLimitPerSecond    #NUM (def|max: 300). Max NUM requests per second.
 
 TARGET.Arn                        #'API_DEST_ARN'
 TARGET.HttpParameters             #HTTP_TARGET. Request parameters
@@ -776,6 +800,7 @@ DETAIL.ApiDestinationName         #'API_DEST'
                                   └────────────────┘
 
 CONN                              #Sets of secret (e.g. auth-related) HTTP requests parameters, used by an API_DEST
+                                  #Max 3e3 (soft) per REGION|ACCOUNT
 CONN.ConnectionArn                #'CONN_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:connection/CONN'
 CONN.Name                         #'CONN'
                                   #Must be [:alnum:]-. and max 64 chars
@@ -951,6 +976,7 @@ AWS::Events::EventBus             #Includes RESPROPs: KmsKeyIdentifier
 
 ENDPOINT                          #Redirects PutEvents() to a failover REGION2 when the primary REGION is unavailable
                                   #Optional
+                                  #Max 100 (soft) per REGION|ACCOUNT
 ENDPOINT.Arn                      #'ENDPOINT_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:endpoint/ENDPOINT'
 ENDPOINT.Name                     #'ENDPOINT'
                                   #Must be globally unique, e.g. include 'REGION' in its name
@@ -1159,7 +1185,7 @@ BUS.Policy                        #IAM 'POLICY_DOC'. BUS_POLICY
                                   #     - COND_KEY aws:PrincipalArn or aws:SourceArn|SourceAccount
                                   #     - identity-level POLICY instead
                                   #PACTIONs are only cross-account ones (see below)
-                                  #Max 10KB
+                                  #Max 10KB (soft)
                                   #Def: none
                                   #  - i.e. allows any PACTION in same ACCOUNT + REGION
 
@@ -1264,6 +1290,10 @@ FORMAT ==>                        #REST API
 PAGINATION ==>                    #Uses REQ.Limit (def|max: 100) + REQ|RES.NextToken
                                   #No pagination: ListTagsForResource()
 
+PRICING ==>                       #1$ per 2.5e6 EVENTs
+                                  #  - only ones matching FILTERS
+                                  #  - multiplied by NUM of 64KB chunks
+
                                   ┌──────────┐
                                   │   PIPE   │
                                   └──────────┘
@@ -1272,6 +1302,8 @@ PIPE                              #Like an EventBridge BUS + single RULE + singl
                                   #  - cheaper
                                   #  - more advanced input logic
                                   #  - more options for TARGET
+                                  #Max 1e3 (soft) per ACCOUNT
+                                  #Max 3e3 (REGION-specific) (soft) ongoing executions per ACCOUNT
 
 PIPE.Arn                          #'PIPE_ARN'. 'arn:aws:pipes:REGION:ACCOUNT_ID:pipe/PIPE'
 PIPE.Name                         #'PIPE'
@@ -1507,6 +1539,9 @@ AWS::Pipes::Pipe                  #Includes RESPROPs: Tags
 
 VERSION ==>                       #2024-12-20
 
+PRICING ==>                       #1$ per 1e6 SCHEDULE invocations
+                                  #  - free: 1.4e7/month
+
                                   ┌─────────┐
                                   │   API   │
                                   └─────────┘
@@ -1522,6 +1557,12 @@ FORMAT ==>                        #REST API
 PAGINATION ==>                    #Uses REQ.MaxResults (def|max: 100) + REQ|RES.NextToken
                                   #No pagination: ListTagsForResource()
 
+THROTTLING ==>                    #1e3/s (REGION-specific) (soft): TARGET calls
+                                  #1e3/s (REGION-specific) (soft): Create|Update|Get|DeleteSchedule()
+                                  #50/s (soft): ListSchedules()
+                                  #10/s (soft): Create|List|Get|DeleteScheduleGroup(), ListTagsForResource()
+                                  #1/s (soft): [Un]tagResource()
+
                                   ┌───────────┐
                                   │   GROUP   │
                                   └───────────┘
@@ -1529,7 +1570,7 @@ PAGINATION ==>                    #Uses REQ.MaxResults (def|max: 100) + REQ|RES.
 GROUP                             #Group of SCHEDULEs
                                   #A 'default' GROUP already exists, and cannot be deleted
                                   #Deleting also deletes the SCHEDULEs
-                                  #Max 500 per ACCOUNT
+                                  #Max 500 (soft) per REGION|ACCOUNT
 GROUP.Arn                         #'GROUP_ARN'. 'arn:aws:scheduler:REGION:ACCOUNT_ID:schedule-group/GROUP'
 GROUP.Name                        #'GROUP'
                                   #Must be [:alnum:]-_. and max 64 chars
@@ -1580,6 +1621,7 @@ AWS::Scheduler::ScheduleGroup     #RESPROPs: Name
                                   └──────────────┘
 
 SCHEDULE                          #Calls a SCHEDULE_TARGET at specific times
+                                  #Max 1e7 (soft) per REGION|ACCOUNT
 SCHEDULE.Arn                      #'SCHEDULE_ARN'. 'arn:aws:scheduler:REGION:ACCOUNT_ID:schedule/GROUP/SCHEDULE'
 SCHEDULE.Name                     #'SCHEDULE'
                                   #Must be [:alnum:]-_. and max 64 chars
@@ -1796,11 +1838,17 @@ FORMAT ==>                        #REST API
 PAGINATION ==>                    #Uses REQ.limit (def|max: 100) + REQ|RES.nextToken
                                   #No pagination: ListTagsForResource()
 
+PRICING ==>                       #REGISTRYs|SCHEMAs: free
+                                  #1$ per 1e7 EVENTs analyzed by DISCOVERER
+                                  #  - multiplied by NUM of 8KB chunks
+                                  #  - free: 5e6/month
+
                                   ┌──────────────┐
                                   │   REGISTRY   │
                                   └──────────────┘
 
 REGISTRY                          #Group of SCHEMAs
+                                  #Max 10 (soft) per REGION|ACCOUNT
 REGISTRY.RegistryArn              #'REGISTRY_ARN'. 'arn:aws:schemas:REGION:ACCOUNT_ID:registry/REGISTRY'
 REGISTRY.RegistryName             #'REGISTRY'
 REGISTRY.Description              #STR. Max 256 chars
@@ -1861,6 +1909,8 @@ AWS_EVENT
 
 SCHEMA                            #JSON schema, and metadata
                                   #Automatically deleted after 2 years if no API calls
+                                  #Max 100 (soft) per SCHEMAs
+                                  #  - 200 if using a DISCOVERER
 SCHEMA.SchemaArn                  #'SCHEMA_ARN'. 'arn:aws:schemas:REGION:ACCOUNT_ID:schema/REGISTRY/SCHEMA'
 SCHEMA.SchemaName                 #'SCHEMA'
 SCHEMA.Description                #STR. Max 256 chars
@@ -1935,6 +1985,7 @@ AWS::EventSchemas::Schema         #RESPROPs: SchemaName, Description, RegistryNa
                                   └─────────────┘
 
 SCHEMA.SchemaVersion              #'VERSION_NUM', automatically incremented on create|update, starting at '1'
+                                  #Max 100 (soft) per SCHEMAs
 SCHEMA.VersionCreatedDate         #'DATE'
 
 SCHEMA.VersionCount               #NUM of VERSIONs
@@ -1964,6 +2015,7 @@ AWS::EventSchemas::Schema         #RESATTRs: SchemaVersion, VersionCreatedDate
 
 DISCOVERER                        #Create|infer SCHEMAs from a BUS's EVENTs
                                   #Not if BUS.KmsKeyIdentifier set
+                                  #Max 10 (soft) per REGION|ACCOUNT
 DISCOVERER.DiscovererArn          #'DISCOVERER_ARN'. 'arn:aws:schemas:REGION:ACCOUNT_ID:discoverer/DISCOVERER_MID'
 DISCOVERER.DiscovererId           #'DISCOVERER_MID'
 DISCOVERER.Description            #STR. Max 256 chars
