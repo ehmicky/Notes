@@ -618,6 +618,7 @@ TARGET.InputPath                  #'JSONPATH' (see its doc). Alternative to TARG
                                   #Input becomes GEVENT_JSON after evaluating JSONPATH
 TARGET.InputTransformer           #INPUT_TRANSFORM. Alternative to TARGET.Input
 INPUT_TRANSFORM.InputTemplate     #STR used as input
+                                  #Can be newline-separated "...", which are then joined by newlines
                                   #Max 8KB
 INPUT_TRANSFORM.InputPathsMap.VAR #'JSONPATH'. Replaces:
                                   #  - any '<VAR>' in InputTemplate
@@ -627,10 +628,6 @@ INPUT_TRANSFORM.InputPathsMap.VAR #'JSONPATH'. Replaces:
                                   #    (no concatenation, to avoid injection)
                                   #Max 100 VARs
                                   #VAR must be [:alnum:]_-, max 256 chars
-
-JSONPATH                          #Only .VAR [NUM] .* and [*]
-                                  #If path not matching: undefined, but no error
-                                  #Max 256 chars
 
                                   ┌─────────────────┐
                                   │   TARGET AUTH   │
@@ -686,6 +683,23 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets TARGET_ARR: Id, Ar
 CLOUDTRAIL ==>                    #*Target*() are logged with CloudTrail as data EVENTs
                                   #RULE is LOG_RESOURCE
 
+                                  ┌──────────────┐
+                                  │   JSONPATH   │
+                                  └──────────────┘
+
+JSONPATH                          #Only .VAR [NUM] .* and [*]
+                                  #If path not matching: undefined, but no error
+                                  #Max 256 chars
+
+aws.events.*                      #Can be used as:
+                                  #  - 'JSONPATH'
+                                  #  - <aws.events.*> in INPUT_TRANSFORM.InputTemplate
+aws.events.rule-arn               #'RULE_ARN'
+aws.events.rule-name              #'RULE'
+aws.events.event.json             #GEVENT
+aws.events.event                  #GEVENT, without GEVENT.detail
+aws.events.event.ingestion-time   #GEVENT.time
+
                                   ┌────────────────┐
                                   │   TARGET BUS   │
                                   └────────────────┘
@@ -717,7 +731,9 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn
 
 TARGET.RetryPolicy                #RETRY_POLICY
                                   #Retries uses exponential backoff
-                                  #Only for retriable ERROR CODEs, e.g. not for permission issues
+                                  #Only for retriable ERROR CODEs
+                                  #  - server errors (like 5**) and throttling (like 429)
+                                  #  - not for permission issues
 
 RETRY_POLICY                      #Max NUM (in secs) of time to keep retrying on failed EVENTs
  .MaximumEventAgeInSeconds        #Min: 1m, def|max: 1d
@@ -1421,6 +1437,10 @@ PIPE.StateReason                  #STR
 PIPE.DesiredState                 #Updating whether 'RUNNING' or 'STOPPED'
                                   #By default, 'RUNNING' (more info with DescribePipe())
 
+RETRY ==>                         #Like EventBridge Rules, but cannot configure
+                                  #Retries on partial batch failures (e.g. with SQS)
+                                  #On retry, PIPE.Enrichment is re-performed
+
 PIPE.Source                       #'ARN' where EVENTs are pulled from. TARGET_TYPE-specific.
                                   #Each SERVICE documented it in its respective docs
 PIPE.SourceParameters             #PIPE_SRC
@@ -1536,6 +1556,23 @@ AWS::Pipes::Pipe                  #RESPROPs:
 
 CLOUDTRAIL ==>                    #*Pipe*() are logged with CloudTrail as data EVENTs
                                   #PIPE is LOG_RESOURCE
+
+                                  ┌──────────────┐
+                                  │   JSONPATH   │
+                                  └──────────────┘
+
+JSONPATH                          #Like EventBridge Rules (see its doc)
+
+aws.pipes.*                       #Can be used as:
+                                  #  - 'JSONPATH'
+                                  #  - <aws.pipes.*> in PIPE_DEST|ENRICH.InputTemplate
+aws.pipes.pipe-arn                #'PIPE_ARN'
+aws.pipes.pipe-name               #'PIPE'
+aws.pipes.source-arn              #PIPE.Source
+aws.pipes.target-arn              #PIPE.Target
+aws.pipes.enrichment-arn          #PIPE.Enrichment
+aws.pipes.event                   #Input OBJ
+aws.pipes.event.ingestion-time    #Time when being processed
 
                                   ┌──────────────┐
                                   │   PIPE BUS   │
@@ -2408,8 +2445,9 @@ READONLY EVENTS ==>               #Write EVENTs always sent
 
 TARGET.Arn                        #'FUNC_ARN'. Calls Invoke()
                                   #Input is INVOCATION_REQ.Payload
-PIPE.Target                       #Same
 
+PIPE.Target                       #Same
+                                  #Max batch size: 6MB (like Invoke()'s limit)
 PIPE_DEST.LambdaFunctionParameters#Either:
  .InvocationType                  #  - 'REQUEST_RESPONSE' (def): INVOCATION_REQ.InvocationType 'RequestResponse'
                                   #  - 'FIRE_AND_FORGET': INVOCATION_REQ.InvocationType 'Event'
@@ -2463,8 +2501,11 @@ AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: 
                                   └─────────────────┘
 
 TARGET.Arn                        #'CALL_ROUTE_ARN'. Invoke ROUTE
-                                  #Input is request payload
-PIPE.Target                       #Same
+                                  #Input is request body
+                                  #Cannot use private endpoint
+                                  #Timeout 5s
+PIPE.Target                       #Same except timeout 29s
+                                  #Max batch size: 1
 
 TARGET|PIPE_DEST.HttpParameters   #Same as when TARGET is EventBridge API_DEST (see its doc)
 
@@ -2489,6 +2530,8 @@ AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: 
                                   └─────────┘
 
 PIPE.Source                       #'QUEUE_ARN' to pull from
+                                  #Can return partial batches, like Lambda EVENT_SOURCE.FunctionResponseTypes
+                                  #Max 1250 ongoing consumers at once
 PIPE_SRC.SqsQueueParameters
  .BatchSize
  |MaximumBatchingWindowInSeconds  #Like Lambda EVENT_SOURCE.*
@@ -2496,6 +2539,7 @@ PIPE_SRC.SqsQueueParameters
 TARGET.Arn                        #'QUEUE_ARN'. Calls SendMessage()
                                   #Input is MESSAGE.MessageBody
 PIPE.Target                       #Same
+                                  #Max batch size: 10
 SCHEDULE_TARGET.Target            #Same
 
 TARGET.SqsParameters
@@ -2534,6 +2578,10 @@ AWS::Scheduler::Schedule          #Includes RESPROPs: Target: Arn, SqsParameters
 TARGET.Arn                        #'TOPIC_ARN'. Calls Publish()
                                   #Input is MESSAGE.Message
 
+PIPE.Target                       #Same
+                                  #Max batch size: 10 (Publish()'s limit)
+                                  #Not FIFO
+
                                   ┌──────────────┐
                                   │   SNS AUTH   │
                                   └──────────────┘
@@ -2551,9 +2599,14 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn
                                   │   CLOUDWATCH LOGS   │
                                   └─────────────────────┘
 
-PIPE.Target                       #'LOG_GROUP_ARN'. Calls PutLogEvents()
-                                  #Input is LLEVENT.message
+TARGET.Arn                        #'LOG_GROUP_ARN'. Calls PutLogEvents()
+                                  #Input is:
+                                  #  - STR (LLEVENT.message)
+                                  #  - if using INPUT_TRANSFORM: OBJ (LLEVENT.message|timestamp)
+                                  #Cannot use TARGET.Input[Path]
 
+PIPE.Target                       #Same except input is always LLEVENT.message
+                                  #Max batch size: 1e4 (PutLogEvents()'s limit)
 PIPE_DEST.CloudWatchLogsParameters#'LOG_STREAM'. LLEVENTS.logStreamName
  .LogStreamName                   #Cannot be 'JSONPATH'
 PIPE_DEST.CloudWatchLogsParameters
