@@ -1081,6 +1081,7 @@ AWS::Events::EventBus             #Includes RESPROPs: KmsKeyIdentifier
                                   └──────────────┘
 
 ENDPOINT                          #Redirects PutEvents() to a failover REGION2 when the primary REGION is unavailable
+                                  #Failover and recovery happen in up to 5 mins
                                   #Optional
                                   #Max 100 (soft) per REGION|ACCOUNT
 ENDPOINT.Arn                      #'ENDPOINT_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:endpoint/ENDPOINT'
@@ -1093,6 +1094,7 @@ ENDPOINT.LastModifiedTime         #DATE_NUM
 
 ENDPOINT.EndpointId               #'ENDPOINT_SUBDOMAIN', automatically created
 EVENTS.EndpointId                 #'ENDPOINT_SUBDOMAIN'. Must be set to use ENDPOINT
+                                  #Requires signature 4a (see AWS signature doc)
 ENDPOINT.EndpointUrl              #'https://ENDPOINT_SUBDOMAIN.endpoints.event.amazonaws.com'
 
 ENDPOINT.State                    #Can be:
@@ -1111,10 +1113,11 @@ ENDPOINT.RoutingConfig
 ENDPOINT.RoutingConfig
  .FailoverConfig.Secondary.Route  #Failover 'REGION2'
 ENDPOINT.EventBuses[1].EventBusArn#'BUS_ARN' in failover|secondary REGION
-                                  #Must have same 'BUS' name as primary
+                                  #Must have same 'BUS' name + ACCOUNT as primary
 
 ENDPOINT.ReplicationConfig.State  #'ENABLED' (def) or 'DISABLED'
-                                  #Replicate EVENTs from REGION to REGION2
+                                  #Replicate EVENTs from primary REGION to secondary REGION2
+                                  #For inverse (during recovery), must use REPLAY instead
 
                                   ┌───────────────────┐
                                   │   ENDPOINT AUTH   │
@@ -1191,8 +1194,8 @@ ARCHIVE.EventPattern              #'FILTERS_JSON' (see above)
 ARCHIVE.RetentionDays             #NUM of days to keep EVENTs
                                   #Def: 0, i.e. forever until ARCHIVE deleted
 
-ARCHIVE.EventCount                #NUM of stored EVENTs
-ARCHIVE.SizeBytes                 #NUM of bytes of stored EVENTs
+ARCHIVE.EventCount                #Approximate NUM of stored EVENTs
+ARCHIVE.SizeBytes                 #Approximate NUM of bytes of stored EVENTs
 
                                   ┌─────────────────┐
                                   │   ARCHIVE API   │
@@ -1235,6 +1238,7 @@ AWS::Events::Archive              #RESPROPs: ArchiveName, Description, SourceArn
 REPLAY                            #Re-emit stored EVENTs
                                   #Replayed EVENTs are not stored themselves (since already stored)
                                   #EVENTs are emitted in-order per-minute, all at once within each minute
+                                  #Max 10 at once per REGION|ACCOUNT
 REPLAY.ReplayArn                  #'REPLAY_ARN'. 'arn:aws:events:REGION:ACCOUNT_ID:replay/REPLAY'
 REPLAY.ReplayName                 #'REPLAY'
                                   #Must be [:alnum:].-_ and max 64 chars
@@ -1395,7 +1399,7 @@ FORMAT ==>                        #REST API
 PAGINATION ==>                    #Uses REQ.Limit (def|max: 100) + REQ|RES.NextToken
                                   #No pagination: ListTagsForResource()
 
-PRICING ==>                       #1$ per 2.5e6 EVENTs
+PRICING ==>                       #1$ per 2.5e6 PEVENTs
                                   #  - only ones matching FILTERS
                                   #  - multiplied by NUM of 64KB chunks
 
@@ -1413,12 +1417,20 @@ AmazonEventBridgePipes
                                   │   PIPE   │
                                   └──────────┘
 
-PIPE                              #Like an EventBridge BUS + single RULE + single TARGET but:
+PIPE                              #Like:
+                                  #  - Lambda EVENT_SOURCE
+                                  #  - EventBridge BUS
+                                  #  - single RULE
+                                  #  - single TARGET
+                                  #But:
                                   #  - cheaper
-                                  #  - more advanced input logic
+                                  #  - simpler
+                                  #  - more advanced transformation logic
                                   #  - more options for TARGET
                                   #Max 1e3 (soft) per ACCOUNT
-                                  #Max 3e3 (REGION-specific) (soft) ongoing executions per ACCOUNT
+
+PIPE_EXEC                         #Single batch from PIPE.Source being processed
+                                  #Max 3e3 (REGION-specific) (soft) PIPE_EXECs at once per ACCOUNT
 
 PIPE.Arn                          #'PIPE_ARN'. 'arn:aws:pipes:REGION:ACCOUNT_ID:pipe/PIPE'
 PIPE.Name                         #'PIPE'
@@ -1437,48 +1449,12 @@ PIPE.StateReason                  #STR
 PIPE.DesiredState                 #Updating whether 'RUNNING' or 'STOPPED'
                                   #By default, 'RUNNING' (more info with DescribePipe())
 
-RETRY ==>                         #Like EventBridge Rules, but cannot configure
-                                  #Retries on partial batch failures (e.g. with SQS)
-                                  #On retry, PIPE.Enrichment is re-performed
-
-PIPE.Source                       #'ARN' where EVENTs are pulled from. TARGET_TYPE-specific.
-                                  #Each SERVICE documented it in its respective docs
-PIPE.SourceParameters             #PIPE_SRC
-PIPE_SRC.*Parameters              #OBJ. TARGET_TYPE-specific options
-                                  #Each SERVICE documented it in its respective docs
-PIPE_SRC.FilterCriteria           #'FILTERS_JSON' (see EventBridge Rules doc)
- .Filters[*].Pattern              #Def: none, i.e. matches any EVENT
-                                  #Max 5 items
-                                  #Cannot use:
-                                  #  - FILTER.anything-but FILTER2
-                                  #  - FILTER.wildcard
-
-PIPE.Target                       #'ARN' where EVENTs are sent to. TARGET_TYPE-specific.
-                                  #Each SERVICE documented it in its respective docs
-PIPE.TargetParameters             #PIPE_DEST
-PIPE_DEST.*Parameters             #OBJ. TARGET_TYPE-specific options
-                                  #Some TARGET_TYPEs do not have any
-                                  #Each SERVICE documented it in its respective docs
-                                  #Most values can be 'JSONPATH'
-                                  #  - unless documented as not
-                                  #  - only STRs, and not enums
-                                  #  - references input (before any transformation)
-PIPE_DEST.InputTemplate           #'OBJ_JSON' used as input
-                                  #Can be ''
-                                  #Max 8KB
-
-PIPE.Enrichment                   #'ARN'???
-                                  #Is API Gateway CALL_ROUTE_ARN???
-PIPE.EnrichmentParameters         #ENRICH
-ENRICH.InputTemplate              #Like PIPE_DEST.InputTemplate but for the input passed to PIPE.Enrichment
-ENRICH.HttpParameters             #HTTP_TARGET (see EventBridge Rules doc) used when calling PIPE.Enrichment
-
                                   ┌───────────────┐
                                   │   PIPE AUTH   │
                                   └───────────────┘
 
-PIPE.RoleArn                      #'ROLE_ARN' used to interact with both PIPE.Source|Target
-                                  #Which permission is required is TARGET_TYPE-specific
+PIPE.RoleArn                      #'ROLE_ARN' used to interact with PIPE.Source|Enrichment|Target
+                                  #Which permission is required is SERVICE-specific
                                   #Must be assumable by Principal.Service 'pipes.amazonaws.com'
                                   #Should use COND_KEY aws:SourceArn PIPE_ARN, aws:SourceAccount ACCOUNT_ID
 
@@ -1544,11 +1520,25 @@ DeletePipe()                      #  - only Name
                                   │   PIPE IAC   │
                                   └──────────────┘
 
-AWS::Pipes::Pipe                  #RESPROPs:
-                                  #  - Name, Description, DesiredState, Source, Target, Enrichment, EnrichmentParameters, RoleArn
-                                  #  - SourceParameters: FilterCriteria, *Parameters
-                                  #  - TargetParameters: InputTemplate, *Parameters
+AWS::Pipes::Pipe                  #RESPROPs: Name, Description, DesiredState, RoleArn
                                   #RESATTRs: Arn, CreationTime, LastModifiedTime, CurrentState, StateReason
+
+                                  ┌──────────────────┐
+                                  │   PIPE METRICS   │
+                                  └──────────────────┘
+
+AWS/Pipes/Concurrency             #NUM of PIPE_EXECs
+                                  #DVAR AwsAccountId 'ACCOUNT_ID'
+AWS/Pipes/ExecutionThrottled      #NUM of PIPE_EXECs throttled
+                                  #DVAR AwsAccountId 'ACCOUNT_ID'
+AWS/Pipes/ExecutionTimeout        #NUM of PIPE_EXECs timed out
+AWS/Pipes/ExecutionFailed         #NUM of PIPE_EXECs failed
+AWS/Pipes/ExecutionPartiallyFailed#NUM of PIPE_EXECs partially failed
+
+AWS/Pipes/Duration                #Duration (in ms) of PIPE_EXECs
+
+DVAR PipeName                     #'PIPE'
+                                  #With all AWS/Pipes/* METRICs except Concurrency
 
                                   ┌──────────────────┐
                                   │   PIPE LOGGING   │
@@ -1557,11 +1547,155 @@ AWS::Pipes::Pipe                  #RESPROPs:
 CLOUDTRAIL ==>                    #*Pipe*() are logged with CloudTrail as data EVENTs
                                   #PIPE is LOG_RESOURCE
 
+                                  ┌────────────┐
+                                  │   SOURCE   │
+                                  └────────────┘
+
+PIPE.Source                       #'ARN' where PEVENTs are pulled from. SERVICE-specific.
+                                  #Each SERVICE documented it in its respective docs
+
+PIPE.SourceParameters             #PIPE_SRC
+PIPE_SRC.*Parameters              #OBJ. SERVICE-specific options
+                                  #Each SERVICE documented it in its respective docs
+
+BATCHING ==>                      #Most sources produce ARRs of messages
+                                  #  - i.e. an ARR is sent to TARGET
+                                  #ARR cannot be larger than TARGET's max length for inputs
+                                  #  - e.g. 10 with SQS, 1e4 with CloudWatch Logs, etc.
+                                  #  - if target does not support ARR of messages as input, source but produce use batch size 1
+
+                                  ┌────────────────┐
+                                  │   SOURCE IAC   │
+                                  └────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Source, SourceParameters: *Parameters
+
+                                  ┌───────────┐
+                                  │   EVENT   │
+                                  └───────────┘
+
+PEVENT                            #Input received from PIPE.Source
+
+PEVENT.*                          #SERVICE-specific
+
+PEVENT.DATA                       #Value is SERVICE-specific
+                                  #Key name is also SERVICE-specific
+                                  #Usually JSON stringified (if valid JSON) or base64'd
+                                  #Can use data.VARR in both FILTERS and ENRICH|PIPE_DEST.InputTemplate
+
+PEVENT.eventSource                #'aws:SERVICE'
+PEVENT.eventSourceArn             #'ARN'. SERVICE-specific
+
+PEVENT.awsRegion                  #'REGION'. Only with Kinesis, SQS, DynamoDB
+PEVENT.eventSourceKey             #Only with MQ|Kafka
+PEVENT.eventVersion
+PEVENT.eventID
+PEVENT.eventName                  #Only with Kinesis, DynamoDB
+PEVENT.invokeIdentityArn          #Only with Kinesis
+
+                                  ┌───────────────────┐
+                                  │   EVENT METRICS   │
+                                  └───────────────────┘
+
+AWS/Pipes/EventCount              #NUM of PEVENTs
+AWS/Pipes/EventSize               #Size (in bytes) of PEVENTs
+
+                                  ┌────────────────┐
+                                  │   ENRICHMENT   │
+                                  └────────────────┘
+
+PIPE.Enrichment                   #'ARN'. SERVICE-specific, documented in their respective docs
+                                  #Sets PEVENT using the result of an AWS SERVICE call
+                                  #Source batch size must be 1, if ARN is using API Gateway or API_DEST
+                                  #Can return a batch ARR of items
+                                  #Can return empty ARR to skip
+                                  #Max response 6MB
+
+PIPE.EnrichmentParameters         #ENRICH
+ENRICH.InputTemplate              #Like PIPE_DEST.InputTemplate but for the input passed to PIPE.Enrichment
+ENRICH.HttpParameters             #HTTP_TARGET (see EventBridge Rules doc) used when calling PIPE.Enrichment
+
+                                  ┌────────────────────┐
+                                  │   ENRICHMENT IAC   │
+                                  └────────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Enrichment, EnrichmentParameters
+
+                                  ┌────────────────────────┐
+                                  │   ENRICHMENT METRICS   │
+                                  └────────────────────────┘
+
+AWS/Pipes/EnrichmentStageDuration #Duration (in ms) of ENRICH
+AWS/Pipes/EnrichmentStageFailed   #NUM of ENRICH failed
+
+                                  ┌────────────┐
+                                  │   FILTER   │
+                                  └────────────┘
+
+PIPE_SRC.FilterCriteria           #'FILTERS_JSON' (see EventBridge Rules doc)
+ .Filters[*].Pattern              #Def: none, i.e. matches any PEVENT
+                                  #Max 5 items
+                                  #Done after PIPE.Enrichment
+                                  #Cannot use:
+                                  #  - FILTER.anything-but FILTER2
+                                  #  - FILTER.wildcard
+                                  #  - PEVENT: eventSource*, eventVersion, eventID, eventName, awsRegion, invokeIdentityArn
+
+                                  ┌────────────────┐
+                                  │   FILTER IAC   │
+                                  └────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: SourceParameters: FilterCriteria
+
+                                  ┌────────────┐
+                                  │   TARGET   │
+                                  └────────────┘
+
+PIPE.Target                       #'ARN' where PEVENTs are sent to. TARGET_TYPE-specific.
+                                  #Each SERVICE documented it in its respective docs
+
+PIPE.TargetParameters             #PIPE_DEST
+PIPE_DEST.*Parameters             #OBJ. TARGET_TYPE-specific options
+                                  #Some TARGET_TYPEs do not have any
+                                  #Each SERVICE documented it in its respective docs
+                                  #Most values can be 'JSONPATH'
+                                  #  - unless documented as not
+                                  #  - only STRs, and not enums
+                                  #  - references PEVENT (before any transformation)
+
+PIPE_DEST.InputTemplate           #STR used as input
+                                  #Can be ''
+                                  #Can include <JSONPATH> anywhere
+                                  #Max 8KB
+
+RETRY ==>                         #Like EventBridge Rules, but cannot configure
+                                  #Retries on partial batch failures (e.g. with SQS)
+                                  #On retry, PIPE.Enrichment is re-performed
+
+                                  ┌────────────────┐
+                                  │   TARGET IAC   │
+                                  └────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Target, TargetParameters: InputTemplate, *Parameters
+
+                                  ┌────────────────────┐
+                                  │   TARGET METRICS   │
+                                  └────────────────────┘
+
+AWS/Pipes/Invocations             #NUM of TARGET calls
+                                  #DVAR AwsAccountId 'ACCOUNT_ID'
+AWS/Pipes/TargetStageFailed       #NUM of TARGET calls failed
+AWS/Pipes/
+ TargetStagePartiallyFailed       #NUM of TARGET calls partially failed
+AWS/Pipes/TargetStageSkipped      #NUM of TARGET calls were skipped, e.g. due to ENRICH returning empty ARR
+
+AWS/Pipes/TargetStageDuration     #Duration (in ms) of TARGETs
+
                                   ┌──────────────┐
                                   │   JSONPATH   │
                                   └──────────────┘
 
-JSONPATH                          #Like EventBridge Rules (see its doc)
+JSONPATH                          #Like EventBridge Rules (see its doc) but targetting PEVENT
 
 aws.pipes.*                       #Can be used as:
                                   #  - 'JSONPATH'
@@ -1571,7 +1705,8 @@ aws.pipes.pipe-name               #'PIPE'
 aws.pipes.source-arn              #PIPE.Source
 aws.pipes.target-arn              #PIPE.Target
 aws.pipes.enrichment-arn          #PIPE.Enrichment
-aws.pipes.event                   #Input OBJ
+aws.pipes.event                   #PEVENT
+aws.pipes.event.json              #Same but undefined if not JSON
 aws.pipes.event.ingestion-time    #Time when being processed
 
                                   ┌──────────────┐
@@ -1597,17 +1732,22 @@ PIPE_DEST
 
 AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: EventBridgeEventBusParameters
 
-                                  ┌───────────────┐
-                                  │   PIPE HTTP   │
-                                  └───────────────┘
+                                  ┌──────────────────────┐
+                                  │   PIPE HTTP SOURCE   │
+                                  └──────────────────────┘
 
-PIPE.Target                       #'HTTP_DEST_ARN' (see EventBridge Rules doc)
-                                  #Def: uses Principal.Service 'pipes.amazonaws.com'
+PIPE.Enrichment                   #'API_DEST_ARN' (see EventBridge Rules doc)
+
+                                  ┌──────────────────────┐
+                                  │   PIPE HTTP TARGET   │
+                                  └──────────────────────┘
+
+PIPE.Target                       #'API_DEST_ARN' (see EventBridge Rules doc)
 PIPE_DEST.HttpParameters          #HTTP_TARGET (see EventBridge Rules doc). Request parameters
 
-                                  ┌───────────────────┐
-                                  │   PIPE HTTP IAC   │
-                                  └───────────────────┘
+                                  ┌──────────────────────────┐
+                                  │   PIPE HTTP TARGET IAC   │
+                                  └──────────────────────────┘
 
 AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: HttpParameters
 
@@ -1615,7 +1755,7 @@ AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: 
                                   │   ENCRYPTION   │
                                   └────────────────┘
 
-PIPE.KmsKeyIdentifier             #'KMS_KEY_ARN|MID' (def: '', i.e. AWS managed). Encrypt EVENTs at rest
+PIPE.KmsKeyIdentifier             #'KMS_KEY_ARN|MID' (def: '', i.e. AWS managed). Encrypt PEVENTs at rest
 
                                   ┌─────────────────────┐
                                   │   ENCRYPTION AUTH   │
@@ -1640,16 +1780,19 @@ PIPE.LogConfiguration             #LOGGING
 
 LOGGING.Level                     #One of:
                                   #  - 'OFF' (def)
-                                  #  - 'ERROR'
-                                  #  - 'INFO'
-                                  #  - 'TRACE'
+                                  #  - 'ERROR': STATE '[PARTIALLY_]FAILED', 'THROTTLED', 'TIMEOUT'
+                                  #  - 'INFO': also:
+                                  #     - STATE 'STARTED|SUCCEEDED' for STEP 'EXECUTION' and 'ENRICHMENT|TARGET_STAGE'
+                                  #     - STATE 'SKIPPED' for STEP 'ENRICHMENT_INVOCATION'
+                                  #  - 'TRACE': all
 
 LOGGING.IncludeExecutionData      #Either:
-                                  #  - undefined (def): omit payload, awsRequest, awsResponse
+                                  #  - undefined (def): omit LOG_PAYLOAD.payload|awsRequest|awsResponse
+                                  #     - reason: bigger, and might contain secret values
                                   #  - ['ALL']: inverse
 
 LOGGING
- .CloudwatchLogsLogDestination
+ .CloudwatchLogsLogDestinationa
  .LogGroupArn                     #'LOG_GROUP_ARN'
 
 LOGGING.FirehoseLogDestination
@@ -1676,6 +1819,59 @@ PACTION                           #If LOGGING.IncludeExecutionData ['ALL'] + PIP
                                   └─────────────────┘
 
 AWS::Pipes::Pipe                  #Includes RESPROPs: LogConfiguration
+
+                                  ┌───────────────────┐
+                                  │   LOGGING STEPS   │
+                                  └───────────────────┘
+
+STEP + STATE                      #When LOG_PAYLOAD is produced
+
+STEP 'EXECUTION'                  #ENRICH + TARGET
+STEP 'ENRICHMENT_STAGE'           #ENRICH.InputTemplate + ENRICH call
+STEP 'ENRICHMENT_TRANSFORMATION'  #ENRICH.InputTemplate
+STEP 'ENRICHMENT_INVOCATION'      #ENRICH call
+STEP 'TARGET_STAGE'               #PIPE_DEST.InputTemplate + TARGET call
+STEP 'TARGET_TRANSFORMATION'      #PIPE_DEST.InputTemplate
+STEP 'TARGET_INVOCATION'          #TARGET call
+
+STATE 'STARTED'                   #Called 'ENTERED' with 'ENRICHMENT|TARGET_STAGE'
+STATE 'SUCCEEDED'                 #
+STATE 'FAILED'                    #
+STATE 'PARTIALLY FAILED'          #Only with 'EXECUTION' and 'TARGET_STAGE|INVOCATION'
+STATE 'SKIPPED'                   #Only with 'ENRICHMENT_INVOCATION' and 'TARGET_STAGE|INVOCATION'
+STATE 'THROTTLED'                 #Only with 'EXECUTION'
+STATE 'TIMEOUT'                   #Only with 'EXECUTION'
+
+                                  ┌─────────────────────┐
+                                  │   LOGGING PAYLOAD   │
+                                  └─────────────────────┘
+
+LOG_PAYLOAD                       #One per PEVENT batch
+                                  #Max 256KB if sending to LOG_GROUP
+LOG_PAYLOAD.executionId           #'UUID'
+LOG_PAYLOAD.timestamp             #'DATE'
+LOG_PAYLOAD.resourceArn           #'PIPE_ARN'
+LOG_PAYLOAD.logLevel              #LOGGING.Level
+LOG_PAYLOAD.messageType           #'STEP_STATE'
+LOG_PAYLOAD.payload               #'JSON'. PEVENT batch
+                                  #Only in:
+                                  #  - STATE 'STARTED' for STEP 'EXECUTION'
+                                  #  - STATE 'SUCCEEDED' for STEP 'ENRICHMENT|TARGET_STAGE|TRANSFORMATION'
+LOG_PAYLOAD.awsRequest            #'JSON'. Request to ENRICH|TARGET
+                                  #Only in:
+                                  #  - STATE 'SUCCEEDED|FAILED' for STEP 'ENRICHMENT_INVOCATION'
+                                  #  - STATE 'SUCCEEDED|[PARTIALLY_]FAILED' for STEP 'TARGET_INVOCATION'
+LOG_PAYLOAD.awsResponse           #Same but for response
+LOG_PAYLOAD.truncatedFields       #'VAR'_ARR from LOG_PAYLOAD.VAR that have been truncated to keep LOG_PAYLOAD < 256 KB
+                                  #Done on LOG_PAYLOAD.payload|awsRequest|awsResponse
+
+LOG_PAYLOAD.error                 #LOG_ERROR
+                                  #Only in STATE '[PARTIALLY_]FAILED', 'THROTTLED', 'TIMEOUT'
+LOG_ERROR.httpStatusCode          #STATUS_NUM
+LOG_ERROR.message                 #'MESSAGE'
+LOG_ERROR.details                 #STR
+LOG_ERROR.awsService              #'SERVICE'
+LOG_ERROR.requestId               #'REQ_ID'
 
                                   ┌──────────┐
                                   │   TAGS   │
@@ -2441,9 +2637,16 @@ READONLY EVENTS ==>               #Write EVENTs always sent
                                   #Readonly EVENTs sent only if EventBridge RULE.State
                                   #'ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS' (as opposed to just 'ENABLED')
 
-                                  ┌────────────┐
-                                  │   LAMBDA   │
-                                  └────────────┘
+                                  ┌───────────────────┐
+                                  │   LAMBDA SOURCE   │
+                                  └───────────────────┘
+
+PIPE.Enrichment                   #'FUNC_ARN'. Calls Invoke()
+                                  #Input is INVOCATION_REQ.Payload
+
+                                  ┌───────────────────┐
+                                  │   LAMBDA TARGET   │
+                                  └───────────────────┘
 
 TARGET.Arn                        #'FUNC_ARN'. Calls Invoke()
                                   #Input is INVOCATION_REQ.Payload
@@ -2470,9 +2673,17 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn
 
 AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: LambdaFunctionParameters
 
-                                  ┌────────────────────┐
-                                  │   STEP FUNCTIONS   │
-                                  └────────────────────┘
+                                  ┌───────────────────────────┐
+                                  │   STEP FUNCTIONS SOURCE   │
+                                  └───────────────────────────┘
+
+PIPE.Enrichment                   #'MACHINE_ARN'. Calls StartExecution()
+                                  #Input is EXEC.input
+                                  #Must be Express
+
+                                  ┌───────────────────────────┐
+                                  │   STEP FUNCTIONS TARGET   │
+                                  └───────────────────────────┘
 
 TARGET.Arn                        #'MACHINE_ARN'. Calls StartExecution()
                                   #Input is EXEC.input
@@ -2499,9 +2710,16 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn
 
 AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: StepFunctionStateMachineParameters
 
-                                  ┌─────────────────┐
-                                  │   API GATEWAY   │
-                                  └─────────────────┘
+                                  ┌────────────────────────┐
+                                  │   API GATEWAY SOURCE   │
+                                  └────────────────────────┘
+
+PIPE.Enrichment                   #'CALL_ROUTE_ARN'. Invoke ROUTE
+                                  #Input is request body
+
+                                  ┌────────────────────────┐
+                                  │   API GATEWAY TARGET   │
+                                  └────────────────────────┘
 
 TARGET.Arn                        #'CALL_ROUTE_ARN'. Invoke ROUTE
                                   #Input is request body
@@ -2549,7 +2767,7 @@ INPUT ==>                         #MESSAGE_RCV_RES.* (camelCase'd)
 DATA ==>                          #'MESSAGE_BODY', i.e. INPUT.body
                                   #If valid JSON:
                                   #  - JSON stringified
-                                  #  - can use data.VARR in both FILTERS and INPUT_TRANSFORMER
+                                  #  - can use data.VARR in both FILTERS and ENRICH|PIPE_DEST.InputTemplate
                                   #     - filters out if MESSAGE.body valid JSON but not FILTERS, or vice-versa
 
 INPUT.eventSource                 #Always 'aws:sqs'
