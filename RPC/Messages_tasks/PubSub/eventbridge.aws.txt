@@ -707,6 +707,7 @@ aws.events.event.ingestion-time   #GEVENT.time
 TARGET.Arn                        #EventBridge 'BUS_ARN'. Calls PutEvents()
                                   #I.e. pass EVENT from one BUS to another
                                   #Input is 'GEVENT_JSON'
+                                  #Cannot chain|forward to a third BUS
 
                                   ┌─────────────────────┐
                                   │   TARGET BUS AUTH   │
@@ -1291,8 +1292,7 @@ BUS.Policy                        #IAM 'POLICY_DOC'. BUS_POLICY
                                   #     - identity-level POLICY instead
                                   #PACTIONs are only cross-REGION|ACCOUNT ones (see below)
                                   #Max 10KB (soft)
-                                  #Def: none
-                                  #  - i.e. allows any PACTION in same ACCOUNT + REGION
+                                  #Def: allows nothing
 
 PERMISSION                        #Sets a STATEMENT in BUS.Policy
 PERMISSION.StatementId            #STATEMENT.Sid
@@ -1581,6 +1581,8 @@ aws.pipes.event.ingestion-time    #Time when being processed
 PIPE.Target                       #EventBridge 'BUS_ARN'. Calls PutEvents() (see EventBridge Rules doc)
                                   #Must be in same REGION|ACCOUNT
                                   #Input is 'GEVENT_JSON'
+                                  #Cannot chain|forward to a third BUS
+                                  #Max batch size: 10 (PutEvents()'s limit)
 
 PIPE_DEST
  .EventBridgeEventBusParameters
@@ -2526,17 +2528,44 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn, HttpParam
 
 AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: HttpParameters
 
-                                  ┌─────────┐
-                                  │   SQS   │
-                                  └─────────┘
+                                  ┌────────────────┐
+                                  │   SQS SOURCE   │
+                                  └────────────────┘
 
 PIPE.Source                       #'QUEUE_ARN' to pull from
-                                  #Can return partial batches, like Lambda EVENT_SOURCE.FunctionResponseTypes
-                                  #Max 1250 ongoing consumers at once
+                                  #Similar behavior as Lambda
+                                  #  - including can return partial batches
+                                  #Filtered out MESSAGEs are considered consumed, i.e. deleted
+                                  #Max 1250 ongoing consumers at once per PIPE
+                                  #Max 1000 ReceiveMessage() at once per PIPE
 PIPE_SRC.SqsQueueParameters
  .BatchSize
  |MaximumBatchingWindowInSeconds  #Like Lambda EVENT_SOURCE.*
+QUEUE_ATTRS.VisibilityTimeout     #To allow for time for retries, recommended value is:
+                                  #6 * (processing time + enrichment time)
+
 INPUT ==>                         #MESSAGE_RCV_RES.* (camelCase'd)
+
+DATA ==>                          #'MESSAGE_BODY', i.e. INPUT.body
+                                  #If valid JSON:
+                                  #  - JSON stringified
+                                  #  - can use data.VARR in both FILTERS and INPUT_TRANSFORMER
+                                  #     - filters out if MESSAGE.body valid JSON but not FILTERS, or vice-versa
+
+INPUT.eventSource                 #Always 'aws:sqs'
+INPUT.eventSourceArn              #Always QUEUE_ARN
+
+                                  ┌─────────────────────┐
+                                  │   SQS SOURCE AUTH   │
+                                  └─────────────────────┘
+
+PACTION sqs:ReceiveMessage
+ |DeleteMessage
+ |GetQueueAttributes()            #Must be allowed on QUEUE for PIPE.Source
+
+                                  ┌────────────────┐
+                                  │   SQS TARGET   │
+                                  └────────────────┘
 
 TARGET.Arn                        #'QUEUE_ARN'. Calls SendMessage()
                                   #Input is MESSAGE.MessageBody
@@ -2553,14 +2582,9 @@ SCHEDULE_TARGET.SqsParameters
 PIPE_DEST.SqsQueueParameters
  .MessageDeduplicationId          #MESSAGE.DeduplicationId
 
-                                  ┌──────────────┐
-                                  │   SQS AUTH   │
-                                  └──────────────┘
-
-
-PACTION sqs:ReceiveMessage
- |DeleteMessage
- |GetQueueAttributes()            #Must be allowed on QUEUE for PIPE.Source
+                                  ┌─────────────────────┐
+                                  │   SQS TARGET AUTH   │
+                                  └─────────────────────┘
 
 PACTION sqs:SendMessage           #Must be allowed on QUEUE for TARGET|PIPE|SCHEDULE.RoleArn
                                   #Principal.Service 'events|pipes|scheduler.amazonaws.com'
@@ -2584,10 +2608,10 @@ AWS::Scheduler::Schedule          #Includes RESPROPs: Target: Arn, SqsParameters
 
 TARGET.Arn                        #'TOPIC_ARN'. Calls Publish()
                                   #Input is MESSAGE.Message
+                                  #Not FIFO
 
 PIPE.Target                       #Same
                                   #Max batch size: 10 (Publish()'s limit)
-                                  #Not FIFO
 
                                   ┌──────────────┐
                                   │   SNS AUTH   │
