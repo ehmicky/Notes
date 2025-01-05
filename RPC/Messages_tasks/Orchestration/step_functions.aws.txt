@@ -1027,6 +1027,20 @@ CFACADE.monitorStepFunction       #For AWS/States/Execution*
  (CXMONITORING_OPTS)              #See cdk-monitoring-constructs doc
 CXMONITORING_OPTS.stateMachine    #ICMACHINE
 
+                                  ┌─────────────────────────────────┐
+                                  │   EXECUTION EVENTBRIDGE EVENT   │
+                                  └─────────────────────────────────┘
+
+EVENT_TYPE 'Step Functions
+ Execution Status Change'         #EventBridge EVENT emitted when EXEC created or EXEC.status changes
+SOURCE                            #'aws.states'
+EVENT.Resources                   #'EXEC_ARN'_ARR (single item)
+DETAIL.executionArn|name|startDate
+ |stopDate|stateMachineArn|status
+ |input|output                    #EXEC.*
+DETAIL.inputDetails|outputDetails
+ .included                        #BOOL. Whether DETAIL.input|output excluded due to 248KB limit
+
                                   ┌───────────────────────┐
                                   │   EXECUTION TOOLKIT   │
                                   └───────────────────────┘
@@ -3733,6 +3747,102 @@ AWS::Serverless::StateMachine    =#Includes RESPROPs: Events.EVENT: Type 'Api', 
 
 API ENHANCED COMPONENT ==>       =#Can connect to MACHINE to create first-class INTEGRATION
                                   #Using AWS::Serverless::StateMachine RESPROP Events.EVENT: Type 'Api'
+
+                                  ┌────────────────────────┐
+                                  │   EVENTBRIDGE SOURCE   │
+                                  └────────────────────────┘
+
+PIPE.Enrichment                   #'MACHINE_ARN'. Calls StartSyncExecution()
+                                  #Input is EXEC.input
+                                  #Must be Express
+
+                                  ┌─────────────────────────────┐
+                                  │   EVENTBRIDGE SOURCE AUTH   │
+                                  └─────────────────────────────┘
+
+PACTION states:StartSyncExecution #Must be allowed on MACHINE for PIPE.RoleArn
+
+                                  ┌────────────────────────────┐
+                                  │   EVENTBRIDGE SOURCE IAC   │
+                                  └────────────────────────────┘
+
+new StepFunctionsEnrichment       #CPIPE_ENRICH
+ (ICMACHINE[, OPTS])              #Automatically allows permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+
+                                  ┌────────────────────────┐
+                                  │   EVENTBRIDGE TARGET   │
+                                  └────────────────────────┘
+
+TARGET.Arn                        #'MACHINE_ARN'. Calls StartExecution()
+                                  #Input is EXEC.input
+
+PIPE.Target                       #Same, but calling Start[Sync]Execution()
+                                  #Max batch size: 256KB (i.e. normal limit)
+PIPE_DEST.StepFunctionStateMachine#Either:
+ Parameters.InvocationType        #  - 'REQUEST_RESPONSE' (def): StartSyncExecution()
+                                  #  - 'FIRE_AND_FORGET': StartExecution()
+
+SCHEDULE_TARGET.Arn               #Same, calling StartExecution()
+                                  #Cannot use Express
+
+                                  ┌─────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET AUTH   │
+                                  └─────────────────────────────┘
+
+PACTION
+ states:Start[Sync]Execution      #Must be allowed on MACHINE for TARGET|PIPE|SCHEDULE_TARGET.RoleArn
+
+                                  ┌────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET IAC   │
+                                  └────────────────────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: TargetParameters: StepFunctionStateMachineParameters
+
+new SfnStateMachine(ICMACHINE
+ [, CMACHINE_TARGET_OPTS])        #CTARGET
+CMACHINE_TARGET_OPTS.*            #CTARGET_OPTS.*
+CMACHINE_TARGET_OPTS.input        #CTARGET_INPUT
+CMACHINE_TARGET_OPTS.role         #ICROLE (def: new singleton ROLE)
+                                  #Automatically allows permissions as described above
+
+new SfnStateMachine               #CPIPE_TARGET
+ (ICMACHINE, OPTS)                #Adds permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.invocationType               #PIPE_DEST.StepFunctionStateMachineParameters.InvocationType (def: 'FIRE_AND_FORGET')
+
+new StepFunctionsStartExecution
+ (ICMACHINE                       #CSCHEDULE_TARGET
+ [, CMACHINE_STARGET_OPTS])       #Adds permissions as described above
+CMACHINE_STARGET_OPTS.*           #CSTARGET_OPTS.*
+
+                                  ┌────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET SAM   │
+                                  └────────────────────────────┘
+
+AWS::Serverless::StateMachine     #Includes RESPROPs: Events.EVENT:
+                                  #  - Type 'EventBridgeRule|Schedule[V2]': same as AWS::Serverless::Function (see its doc) but:
+                                  #     - creates RULE with TARGET MACHINE and its related ROLE 'MACHINERole'
+                                  #     (Type 'EventBridgeRule')
+                                  #     - def Properties.Target.Id: 'RULEStepFunctionsTarget'
+                                  #     (Type 'Schedule')
+                                  #     - no Properties: Target, RoleArn
+
+AWS::Serverless::Connector        #Can be used with:
+                                  #  - Source: RULE (RESOURCE_REF.RoleName)
+                                  #  - Destination: MACHINE (RESOURCE_REF.Arn)
+                                  #  - Permissions 'Write'
+                                  #Transformed to a MPOLICY on 'ROLE':
+                                  #  - allowing states:StartExecution
+                                  #  - on MACHINE
+
+                                  ┌─────────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET COMPOSER   │
+                                  └─────────────────────────────────┘
+
+RULE ENHANCED COMPONENT ==>       #Can connect to MACHINE to create TARGET + TARGET.RoleArn ROLE
+
+SCHEDULE ENHANCED COMPONENT ==>   #Can connect to MACHINE to create SCHEDULE_TARGET + SCHEDULE_TARGET.RoleArn ROLE
 
                                   ┌───────────┐
                                   │   LOCAL   │
