@@ -22,6 +22,14 @@ Related projects:
   - https://github.com/a-bigelow/cdk-eventbridge-partner-processors
   - https://github.com/awslabs/aws-break-glass-role
 
+SUMMARY ==>                       #Bus: default, encryption, policy
+                                  #Event: batch, time, type, detail, resources
+                                  #Event source: AWS services (including CloudTrail), custom, partner
+                                  #Rule: filter (including test), scheduled, managed
+                                  #Target: type, parameters, input (raw, JSONPath[s]) cross-ACCOUNT|REGION, cross-BUS, role
+                                  #HTTP target: parameters, auth (basic, API key, OAuth), VPC
+                                  #Errors: retry, DLQ, failover|replication, archive|replay
+
 CLOUDWATCH EVENTS ==>             #Name of former major version of EventBridge Rules
                                   #Compatible but no more new features anymore
 
@@ -289,6 +297,7 @@ CLOUDTRAIL ==>                    #CloudTrail is an integrated SERVICE itself
                                   #See its doc
 
 EVENTBRIDGE ==>                   #Itself emits a few EVENTs (e.g. when CONN.ConnectionState changes), with SOURCE 'aws.events'
+                                  #See below
 
                                   ┌───────────────────────┐
                                   │   AWS SERVICES AUTH   │
@@ -321,23 +330,24 @@ EVENT.EventBusName                #'BUS[_ARN]' (def: 'default')
 EVENT.Time                        #DATE_NUM (def: now)
 
 EVENT.Detail                      #'DETAIL_JSON'. Main payload
-                                  #Can be anything. Required, but can be '{}'
+                                  #Can be anything
+                                  #Required, but can be '{}'
                                   #Max 1000 depth levels
 EVENT.DetailType                  #'EVENT_TYPE'. Payload type
-                                  #Can be anything. Required
+                                  #Can be anything
+                                  #Required
 EVENT.Source                      #'EVENT_SOURCE'. Who sent the payload
-                                  #With AWS SERVICEs, this is 'aws.SERVICE'
-                                  #With PARTNER, this is 'SOURCE'
-                                  #Else, can be anything
-                                  #  - recommended: dot-delimited list
-                                  #  - e.g. 'com.COMPANY.APP'
+                                  #With AWS SERVICEs: 'aws.SERVICE'
+                                  #With PARTNER: 'SOURCE'
+                                  #Else: anything
+                                  #  - recommended: dot-delimited list, e.g. 'com.COMPANY.APP'
                                   #Required
 EVENT.Resources                   #'ARN'_ARR (def: none) of related RESOURCEs
                                   #Max 2e3 items
 
 EVENT.TraceHeader                 #'HEADER' (def: 'X-Amzn-Trace-Id'). X-Ray header
 
-GEVENT                            #Internal representation of an EVENT
+GEVENT                            #Representation of an EVENT for filtering|mapping purposes
 GEVENT.version                    #Always '0' (def)
 GEVENT.account                    #'ACCOUNT_ID'
 GEVENT.region                     #'REGION'
@@ -403,7 +413,8 @@ AWS/Events/
 AWS/Events/
  PutEventsApproximateFailedCount  #Approximate NUM of PutEvents() that failed
 AWS/Events/
-PutEventsApproximateThrottledCount#NUM of PutEvents() throttled
+PutEventsApproximateThrottledCount#Approximate NUM of PutEvents() throttled
+
 AWS/Events/PutEventsEntriesCount  #NUM of EVENTs per PutEvents()
 AWS/Events/
  PutEventsFailedEntriesCount      #NUM of EVENTs per PutEvents() that failed
@@ -484,6 +495,12 @@ RULE.EventBusName                 #In input: 'BUS[_ARN]' (def: default BUS)
 RULE.CreatedBy                    #'ACCOUNT_ID' which created the RULE
                                   #Might differ from RULE's ACCOUNT, if a cross-ACCOUNT PutRule() was done
 
+RULE.ManagedBy                    #'SERVICE'. If RULE created by an AWS SERVICE
+                                  #Different from EVENTs emitted automatically by integrated AWS SERVICEs
+                                  #  - for those, users create the RULE instead
+                                  #SERVICE automatically creates the POLICY to allow sending to EventBridge
+RULE|TARGET.Force                 #BOOL. If false (def), do not allow deleting if RULE is SERVICE-managed
+
 RULE.State                        #One of:
                                   #  - 'DISABLED'
                                   #  - 'ENABLED'
@@ -496,9 +513,10 @@ RULE.ScheduleExpression           #See EventBridge Scheduler doc
                                   └───────────────┘
 
 RULE.RoleArn                      #Default TARGET.RoleArn
-                                  #Def: Service.Principal 'events.amazonaws.com'
 
 COND_KEY events:creatorAccount    #RULE.CreatedBy. For Put|Enable|Disable|Delete|DescribeRule(), Put|RemoveTargets|ListTargetsByRule(), *Tag*()
+
+COND_KEY events:ManagedBy         #RULE.ManagedBy. For Put|Enable|Disable|DeleteRule() and Put|RemoveTargets()
 
                                   ┌──────────────┐
                                   │   RULE API   │
@@ -580,21 +598,6 @@ DVAR RuleName                     #'RULE'
 
 CLOUDTRAIL ==>                    #*Rule*() are logged with CloudTrail as data EVENTs
                                   #RULE is LOG_RESOURCE
-
-                                  ┌──────────────────┐
-                                  │   RULE MANAGED   │
-                                  └──────────────────┘
-
-RULE.ManagedBy                    #'SERVICE'. If RULE created by an AWS SERVICE
-                                  #Different from integrated RULEs
-                                  #SERVICE automatically creates the POLICY to allow sending to EventBridge
-RULE|TARGET.Force                 #BOOL. If false (def), do not allow deleting if RULE is SERVICE-managed
-
-                                  ┌───────────────────────┐
-                                  │   RULE MANAGED AUTH   │
-                                  └───────────────────────┘
-
-COND_KEY events:ManagedBy         #RULE.ManagedBy. For Put|Enable|Disable|DeleteRule() and Put|RemoveTargets()
 
                                   ┌────────────┐
                                   │   FILTER   │
@@ -744,8 +747,7 @@ TARGET.*Parameters                #OBJ. TARGET_TYPE-specific options
                                   #  - references input (before any transformation)
 
 TARGET.Rule                       #'RULE'
-TARGET.EventBusName               #'BUS' (def: default BUS) of the RULE
-                                  #If in another ACCOUNT, cannot use TARGET.Input*
+TARGET.EventBusName               #'BUS' (def: 'default') of the RULE
 
 CROSS-REGION|ACCOUNT TARGET ==>   #TARGET must be in same REGION|ACCOUNT as RULE
                                   #  - except for BUS TARGET
@@ -787,16 +789,16 @@ TARGET.RoleArn                    #'ROLE_ARN' used to call TARGET
                                   #  - COND_KEY aws:SourceArn RULE_ARN, aws:SourceAccount ACCOUNT_ID
                                   #Which permission is required is TARGET_TYPE-specific
 
+PACTION iam:PassRole              #Required on current PRINCIPAL, if TARGET.RoleArn set
+                                  #Should use COND_KEY iam:PassedToService 'events.amazonaws.com'
+
+AmazonEventBridgeFullAccess       #Also allow PACTION iam:PassRole, as described above
+
 RESOURCE-BASED POLICY ==>         #TARGET_TYPEs which have resource-based POLICYs must use them instead of TARGET.RoleArn
                                   #Must grant to Principal.Service 'events.amazonaws.com'
                                   #COND_KEY aws:SourceArn RULE_ARN, aws:SourceAccount ACCOUNT_ID
 
 COND_KEY events:TargetArn         #TARGET.Arn, as 'ARN'_ARR. For PutTargets()
-
-PACTION iam:PassRole              #Required on current PRINCIPAL
-                                  #Should use COND_KEY iam:PassedToService 'events.amazonaws.com'
-
-AmazonEventBridgeFullAccess       #Also allow PACTION iam:PassRole, as described above
 
                                   ┌────────────────┐
                                   │   TARGET API   │
@@ -935,63 +937,15 @@ EventField.fromPath('JSONPATH')
 EventField.account|region|eventId
  |time|detailType|source          #'$.VAR' as STR_TK
 
-                                  ┌────────────────┐
-                                  │   TARGET BUS   │
-                                  └────────────────┘
-
-TARGET.Arn                        #EventBridge 'BUS_ARN'. Calls PutEvents()
-                                  #I.e. pass EVENT from one BUS to another
-                                  #Input is 'GEVENT_JSON'
-                                  #Cannot chain|forward to a third BUS
-
-                                  ┌─────────────────────┐
-                                  │   TARGET BUS AUTH   │
-                                  └─────────────────────┘
-
-PACTION events:PutEvents          #Must be allowed, if TARGET.Arn on target BUS2
-                                  #Can use either:
-                                  #  - TARGET.RoleArn
-                                  #  - BUS_POLICY
-                                  #     - COND_KEY aws:SourceArn BUS_ARN, aws:SourceAccount
-                                  #If cross-ACCOUNT:
-                                  #  - must use both
-                                  #  - does not use RULE.RoleArn (as opposed to TARGET.RoleArn)
-
-COND_KEY events:eventBusInvocation#'BOOL'. Whether PutEvents() was called by a TARGET with Arn 'BUS_ARN'
-                                  #For PutEvents()
-
-                                  ┌────────────────────┐
-                                  │   TARGET BUS IAC   │
-                                  └────────────────────┘
-
-AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn
-
-new EventBus
- (ICBUS[, CBUS_TARGET_OPTS])      #CTARGET
-CBUS_TARGET_OPTS.*                #CTARGET_OPTS.*
-CBUS_TARGET_OPTS.role             #ICROLE (def: new singleton ROLE) of TARGET.RoleArn
-                                  #Automatically adds permissions as describe above
-
-                                  ┌────────────────────┐
-                                  │   TARGET BUS SAM   │
-                                  └────────────────────┘
-
-AWS::Serverless::Connector        #Can be used with:
-                                  #  - Source: RULE
-                                  #  - Destination: BUS (RESOURCE_REF.Arn)
-                                  #  - Permissions 'Write'
-                                  #Transformed to a MPOLICY on 'ROLE':
-                                  #  - allowing events:PutEvents
-                                  #  - on BUS
-
                                   ┌───────────┐
                                   │   RETRY   │
                                   └───────────┘
 
-TARGET.RetryPolicy                #RETRY_POLICY
-                                  #Retries uses exponential backoff
+TARGET.RetryPolicy                #RETRY_POLICY. Retries using exponential backoff
                                   #Only for retriable ERROR CODEs
-                                  #  - server errors (like 5**), throttling|concurrency (like 409|429), authentication (like 401|407)
+                                  #  - server errors (like 5**)
+                                  #  - throttling|concurrency (like 409|429)
+                                  #  - authentication (like 401|407)
                                   #  - not for authorization issues
 
 RETRY_POLICY                      #Max NUM (in secs) of time to keep retrying on failed EVENTs
@@ -1093,9 +1047,58 @@ cfn-lint-serverless
 aws_cloudwatch_event_target_no_dlq
 ES4000                            #TARGET.DeadLetterConfig must be set
 
-                                  ┌──────────────────────┐
-                                  │   HTTP DESTINATION   │
-                                  └──────────────────────┘
+                                  ┌────────────────┐
+                                  │   TARGET BUS   │
+                                  └────────────────┘
+
+TARGET.Arn                        #EventBridge 'BUS_ARN'. Calls PutEvents()
+                                  #I.e. pass EVENT from one BUS to another
+                                  #Input is 'GEVENT_JSON'
+                                  #Cannot chain|forward to a third BUS
+
+                                  ┌─────────────────────┐
+                                  │   TARGET BUS AUTH   │
+                                  └─────────────────────┘
+
+PACTION events:PutEvents          #Must be allowed, if TARGET.Arn on target BUS2
+                                  #Can use either:
+                                  #  - TARGET.RoleArn
+                                  #  - BUS_POLICY
+                                  #     - COND_KEY aws:SourceArn BUS_ARN, aws:SourceAccount
+                                  #If cross-ACCOUNT:
+                                  #  - must use both
+                                  #  - does not use RULE.RoleArn (as opposed to TARGET.RoleArn)
+
+COND_KEY events:eventBusInvocation#'BOOL'. Whether PutEvents() was called by a TARGET with Arn 'BUS_ARN'
+                                  #For PutEvents()
+
+                                  ┌────────────────────┐
+                                  │   TARGET BUS IAC   │
+                                  └────────────────────┘
+
+AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: Arn
+
+new EventBus
+ (ICBUS[, CBUS_TARGET_OPTS])      #CTARGET
+CBUS_TARGET_OPTS.*                #CTARGET_OPTS.*
+CBUS_TARGET_OPTS.role             #ICROLE (def: new singleton ROLE) of TARGET.RoleArn
+                                  #Automatically adds permissions as describe above
+
+                                  ┌────────────────────┐
+                                  │   TARGET BUS SAM   │
+                                  └────────────────────┘
+
+AWS::Serverless::Connector        #Can be used with:
+                                  #  - Source: RULE
+                                  #  - Destination: BUS (RESOURCE_REF.Arn)
+                                  #  - Permissions 'Write'
+                                  #Transformed to a MPOLICY on 'ROLE':
+                                  #  - allowing events:PutEvents
+                                  #  - on BUS
+
+                                  ┌──────────┐
+                                  │   HTTP   │
+                                  └──────────┘
 
 API_DEST                          #TARGET that makes a HTTP request
                                   #Timeout 5s
@@ -1118,6 +1121,7 @@ API_DEST
 
 TARGET.Arn                        #'API_DEST_ARN'
                                   #Input is request body
+
 TARGET.HttpParameters             #HTTP_TARGET. Request parameters
                                   #Keys|values can be 'JSONPATH' (except HEADER names)
 HTTP_TARGET.PathParameterValues   #'VAL'_ARR
@@ -1131,16 +1135,16 @@ Content-Type [C]                  #Def: 'application/json; charset=utf-8'
 Retry-After [S]                   #Can be used to increase retry delay
                                   #Can be -1 to stop retrying
 
-                                  ┌───────────────────────────┐
-                                  │   HTTP DESTINATION AUTH   │
-                                  └───────────────────────────┘
+                                  ┌───────────────┐
+                                  │   HTTP AUTH   │
+                                  └───────────────┘
 
 PACTION
  events:InvokeApiDestination      #Must be allowed on API_DEST for TARGET.RoleArn
 
-                                  ┌──────────────────────────┐
-                                  │   HTTP DESTINATION API   │
-                                  └──────────────────────────┘
+                                  ┌──────────────┐
+                                  │   HTTP API   │
+                                  └──────────────┘
 
 CreateApiDestination()            #Req: API_DEST
                                   #  - no ApiDestination*, *Time
@@ -1161,9 +1165,9 @@ DeleteApiDestination()            #Req: API_DEST
                                   #  - only Name
                                   #Res: empty
 
-                                  ┌──────────────────────────┐
-                                  │   HTTP DESTINATION IAC   │
-                                  └──────────────────────────┘
+                                  ┌──────────────┐
+                                  │   HTTP IAC   │
+                                  └──────────────┘
 
 AWS::Events::ApiDestination       #RESPROPs: Name, Description, HttpMethod, InvocationEndpoint, InvocationRateLimitPerSecond
                                   #RESATTRs: Arn
@@ -1193,9 +1197,9 @@ CAPI_DEST_TARGET_OPTS
 CAPI_DEST_TARGET_OPTS.eventRole   #ICROLE (def: new singleton ROLE) of TARGET.RoleArn
                                   #Automatically allows permissions as described above
 
-                                  ┌────────────────────────────────────────┐
-                                  │   HTTP DESTINATION EVENTBRIDGE EVENT   │
-                                  └────────────────────────────────────────┘
+                                  ┌────────────────────────────┐
+                                  │   HTTP EVENTBRIDGE EVENT   │
+                                  └────────────────────────────┘
 
 EVENT_TYPE                        #EventBridge EVENT emitted when API_DEST.Status changes
  'API Destination STATUS'         #STATUS is API_DEST.ApiDestinationState but renamed to 'Activated|Deactivated'
@@ -1443,8 +1447,7 @@ AWS::Events::Connection           #Includes RESPROPs: InvocationConnectivityPara
                                   └────────────────┘
 
 BUS.KmsKeyIdentifier              #'KMS_KEY_ARN|MID' (def: AWS managed). Encrypt EVENTs at rest
-                                  #Only AWS managed key encrypts the following: AWS SERVICE EVENTs, API_DEST, ARCHIVE, FILTERS, INPUT_TRANSFORM
-                                  #I.e. above is not encrypted if using a custom KEY
+                                  #If AWS managed key, also encrypts: AWS SERVICE EVENTs, API_DEST, ARCHIVE, FILTERS, INPUT_TRANSFORM
 
                                   ┌─────────────────────┐
                                   │   ENCRYPTION AUTH   │
@@ -1722,7 +1725,7 @@ PERMISSION.RemoveAllPermissions   #BOOL (def: false). Remove all PERMISSIONs ins
                                   └─────────────────┘
 
 CROSS-REGION|ACCOUNT REQUESTS ==> #Allowed by using Pricipal with another ACCOUNT, in BUS_POLICY
-                                  #Only for PACTIONs: events:PutEvents(), events:*Rule*(), events:*Target*(), events:*Tag*(), events:DescribeEventBus()
+                                  #Only for PACTIONs: events:PutEvents, events:*Rule*, events:*Target*, events:*Tag*, events:DescribeEventBus
                                   #Can also be '*' for all the above PACTIONs
 
 ANONYMOUS REQUESTS ==>            #Allowed by using Principal '*', in BUS_POLICY
