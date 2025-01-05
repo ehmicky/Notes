@@ -1143,8 +1143,8 @@ Retry-After [S]                   #Can be used to increase retry delay
                                   │   HTTP DESTINATION AUTH   │
                                   └───────────────────────────┘
 
-PACTION                           #Must be allowed on TARGET.RoleArn, in order to call API_DEST
- events:InvokeApiDestination      #Resource is API_DEST_ARN
+PACTION
+ events:InvokeApiDestination      #Must be allowed on API_DEST for TARGET.RoleArn
 
                                   ┌──────────────────────────┐
                                   │   HTTP DESTINATION API   │
@@ -1953,14 +1953,16 @@ GENERATE TEMPLATE ==>             #In UI, can generate CloudTemplate template fr
                                   #  - also its related API_DEST|BUS (if used as a TARGET) and ROLE
 
 new Pipe(...CARGS, CPIPE_OPTS)    #
+Pipe.fromPipeName
+ (...CARGS, 'PIPE')->ICPIPE       #
 
-CPIPE[_OPTS].pipeName             #'PIPE'[_TK]
-CPIPE.pipeArn                     #'PIPE_ARN'_CSATTR
+ICPIPE[_OPTS].pipeName            #'PIPE'[_TK]
+ICPIPE.pipeArn                    #'PIPE_ARN'_CSATTR
 
 CPIPE_OPTS
  .description|desiredState        #PIPE.*
 CPIPE_OPTS.role
-CPIPE.pipeRole                    #ICROLE (def: new one assumable by 'pipes.amazonaws.com'). PIPE.RoleArn
+ICPIPE.pipeRole                   #ICROLE (def: new one assumable by 'pipes.amazonaws.com'). PIPE.RoleArn
 
                                   ┌──────────────────┐
                                   │   PIPE METRICS   │
@@ -2050,15 +2052,12 @@ AWS/Pipes/EventSize               #Size (in bytes) of PEVENTs
 
 PIPE.Enrichment                   #'ARN'. SERVICE-specific, documented in their respective docs
                                   #Sets PEVENT using the result of an AWS SERVICE call
-                                  #Source batch size must be 1, if ARN is using API Gateway or API_DEST
                                   #Can return a batch ARR of items
                                   #Can return empty ARR to skip
                                   #Max response 6MB
 
 PIPE.EnrichmentParameters         #ENRICH
 ENRICH.InputTemplate              #Like PIPE_DEST.InputTemplate but for the input passed to PIPE.Enrichment
-ENRICH.HttpParameters             #HTTP_TARGET (see EventBridge Rules doc) used when calling PIPE.Enrichment
-                                  #Only with API Gateway or API_DEST
 
                                   ┌────────────────────┐
                                   │   ENRICHMENT IAC   │
@@ -2097,7 +2096,8 @@ PIPE_SRC.FilterCriteria           #'FILTERS_JSON' (see EventBridge Rules doc)
 
 AWS::Pipes::Pipe                  #RESPROPs: SourceParameters: FilterCriteria: Filters[*]: Pattern STR
 
-CPIPE_OPTS.filter                 #new Filter({pattern: 'FILTERS_JSON'}_ARR). PIPE_SRC.FilterCriteria
+CPIPE_OPTS.filter                 #new Filter(CFILTERS_ARR). PIPE_SRC.FilterCriteria
+CFILTERS                          #FilterPattern.fromObject(FILTERS_OBJ)
 
                                   ┌────────────┐
                                   │   TARGET   │
@@ -2134,6 +2134,9 @@ RETRY ==>                         #On ENRICH|TARGET failure, retries with expone
 
 AWS::Pipes::Pipe                  #RESPROPs: Target, TargetParameters: InputTemplate, *Parameters
 
+CPIPE_OPTS.target                 #CPIPE_TARGET. PIPE.Target + PIPE_DEST.*Parameters
+                                  #Each SERVICE documented it in its respective docs
+
 CPIPE_INPUT                       #PIPE_DEST.InputTemplate
 InputTransformation.fromEventPath
  ('JSONPATH')->CPIPE_INPUT        #'<JSONPATH>'
@@ -2141,6 +2144,9 @@ InputTransformation.fromText(STR)
  ->CPIPE_INPUT                    #STR
 InputTransformation.fromObject
  (OBJ)->CPIPE_INPUT               #'OBJ_JSON'
+
+TargetParameter.fromJsonPath
+ ('JSONPATH')->'<JSONPATH>'       #
 
                                   ┌────────────────────┐
                                   │   TARGET METRICS   │
@@ -2167,11 +2173,26 @@ aws.pipes.*                       #Can be used as:
 aws.pipes.pipe-arn                #'PIPE_ARN'
 aws.pipes.pipe-name               #'PIPE'
 aws.pipes.source-arn              #PIPE.Source
-aws.pipes.target-arn              #PIPE.Target
 aws.pipes.enrichment-arn          #PIPE.Enrichment
+aws.pipes.target-arn              #PIPE.Target
 aws.pipes.event                   #PEVENT
 aws.pipes.event.json              #Same but undefined if not JSON
 aws.pipes.event.ingestion-time    #Time when being processed
+
+                                  ┌──────────────────┐
+                                  │   JSONPATH IAC   │
+                                  └──────────────────┘
+
+DynamicInput.*(...)               #RV. To use inside InputTransformation.from*(...)
+
+DynamicInput.fromEventPath
+ ('JSONPATH')                     #'<JSONPATH>'
+DynamicInput.fromPipeVariable
+ ('<aws.pipes.*>')
+DynamicInput.pipeArn|pipeName
+ |sourceArn|enrichmentArn
+ |targetArn|event|eventJson
+ |eventIngestionTime              #'<aws.pipes.*>'
 
                                   ┌──────────────┐
                                   │   PIPE BUS   │
@@ -2201,6 +2222,27 @@ AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: 
                                   └──────────────────────┘
 
 PIPE.Enrichment                   #'API_DEST_ARN' (see EventBridge Rules doc)
+                                  #Source batch size must be 1
+
+ENRICH.HttpParameters             #HTTP_TARGET (see EventBridge Rules doc)
+
+                                  ┌───────────────────────────┐
+                                  │   PIPE HTTP SOURCE AUTH   │
+                                  └───────────────────────────┘
+
+PACTION
+ events:InvokeApiDestination      #Must be allowed on API_DEST for PIPE.RoleArn
+
+                                  ┌──────────────────────────┐
+                                  │   PIPE HTTP SOURCE IAC   │
+                                  └──────────────────────────┘
+
+new ApiDestinationEnrichment      #CPIPE_ENRICH
+ (ICAPI_DEST[, OPTS])             #Automatically allows permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.pathParameterValues
+ |queryStringParameters
+ |headerParameters                #ENRICH.HttpParameters
 
                                   ┌──────────────────────┐
                                   │   PIPE HTTP TARGET   │
@@ -3570,6 +3612,9 @@ SCHEDULE ENHANCED COMPONENT ==>   #Can connect to MACHINE to create SCHEDULE_TAR
 
 PIPE.Enrichment                   #'CALL_ROUTE_ARN'. Invoke ROUTE
                                   #Input is request body
+                                  #Source batch size must be 1
+
+ENRICH.HttpParameters             #HTTP_TARGET (see EventBridge Rules doc)
 
                                   ┌─────────────────────────────────────────┐
                                   │   API GATEWAY EVENTBRIDGE SOURCE AUTH   │
@@ -3578,6 +3623,20 @@ PIPE.Enrichment                   #'CALL_ROUTE_ARN'. Invoke ROUTE
 PACTION execute-api:Invoke        #Must be allowed on CALL_ROUTE_ARN for PIPE.RoleArn
 PACTION
  execute-api:ManageConnections    #Same with WebSocket API
+
+                                  ┌────────────────────────────────────────┐
+                                  │   API GATEWAY EVENTBRIDGE SOURCE IAC   │
+                                  └────────────────────────────────────────┘
+
+new ApiGatewayEnrichment          #CPIPE_ENRICH
+ (ICAPI[, OPTS])                  #Automatically allows permissions as described above (not for WebSocket)
+OPTS.method                       #'HTTP_METHOD' (def: '*') in PIPE.Enrichment
+OPTS.path                         #'/PATH' (def: '/') in PIPE.Enrichment
+OPTS.stage                        #'STAGE' (def: ICAPI.deploymentStage) in PIPE.Enrichment
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.pathParameterValues
+ |queryStringParameters
+ |headerParameters                #ENRICH.HttpParameters
 
                                   ┌────────────────────────────────────┐
                                   │   API GATEWAY EVENTBRIDGE TARGET   │
