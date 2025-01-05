@@ -4952,6 +4952,123 @@ CFACADE.monitorStepFunction       #For AWS/States/LambdaFunction*
 CXMONITORING_OPTS.lambdaFunction  #ICANYFUNC
 
                                   ┌────────────────────────┐
+                                  │   EVENTBRIDGE SOURCE   │
+                                  └────────────────────────┘
+
+PIPE.Enrichment                   #'FUNC_ARN'. Calls Invoke()
+                                  #Input is REQ
+
+                                  ┌─────────────────────────────┐
+                                  │   EVENTBRIDGE SOURCE AUTH   │
+                                  └─────────────────────────────┘
+
+PACTION lambda:InvokeFunction     #Must be allowed on FUNC_ARN for PIPE.RoleArn
+
+                                  ┌────────────────────────────┐
+                                  │   EVENTBRIDGE SOURCE IAC   │
+                                  └────────────────────────────┘
+
+new LambdaEnrichment              #CPIPE_ENRICH
+ (ICANYFUNC[, OPTS])              #Automatically allows permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+
+                                  ┌────────────────────────┐
+                                  │   EVENTBRIDGE TARGET   │
+                                  └────────────────────────┘
+
+TARGET.Arn                        #'FUNC_ARN'. Calls Invoke()
+                                  #Input is REQ
+
+PIPE.Target                       #Same
+                                  #Max batch size: 6MB (like Invoke()'s limit)
+PIPE_DEST.LambdaFunctionParameters#Either:
+ .InvocationType                  #  - 'REQUEST_RESPONSE' (def): INVOCATION_REQ.InvocationType 'RequestResponse'
+                                  #  - 'FIRE_AND_FORGET': INVOCATION_REQ.InvocationType 'Event'
+
+SCHEDULE_TARGET.Arn               #Same
+
+QUERY EVENTBRIDGE                 #JMESPath 'QUERY' (see its doc) for REQ.detail
+
+                                  ┌─────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET AUTH   │
+                                  └─────────────────────────────┘
+
+PACTION lambda:InvokeFunction     #Must be allowed on FUNC_ARN for:
+                                  #  - TARGET: using FUNCTION_POLICY (not TARGET.RoleArn)
+                                  #     - Principal.Service 'events.amazonaws.com'
+                                  #     - COND_KEY aws:SourceArn RULE_ARN
+                                  #  - PIPE|SCHEDULE_TARGET.RoleArn
+
+                                  ┌────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET IAC   │
+                                  └────────────────────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: TargetParameters: LambdaFunctionParameters
+
+new LambdaFunction                #CTARGET
+ (ICANYFUNC[, CFUNC_TARGET_OPTS]) #Adds permissions as described above
+CFUNC_TARGET_OPTS.*               #CTARGET_OPTS.*
+CFUNC_TARGET_OPTS.event           #CTARGET_INPUT
+
+new LambdaFunction                #CPIPE_TARGET
+ (ICANYFUNC, OPTS)                #Adds permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.invocationType               #PIPE_DEST.LambdaFunctionParameters.*
+
+new LambdaInvoke(ICANYFUNC        #CSCHEDULE_TARGET
+ [, CFUNC_STARGET_OPTS])          #Adds permissions as described above
+CFUNC_STARGET_OPTS.*              #CSTARGET_OPTS.*
+
+                                  ┌────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET SAM   │
+                                  └────────────────────────────┘
+
+AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT:
+                                  #  - Type 'EventBridgeRule': create:
+                                  #     - RULE with TARGET FUNCTION
+                                  #     - Lambda PERMISSION 'RULEPermission'
+                                  #  - Properties:
+                                  #     - EventBusName, State, Pattern, Input|InputPath|InputTransformer, RetryPolicy
+                                  #     - Name (def: 'FUNCTION{EVENT}')
+                                  #     - Target.Id (def: 'RULELambdaTarget')
+                                  #     - DeadLetterConfig:
+                                  #        - Arn
+                                  #        - Type 'SQS': alternative to Arn, which creates the QUEUE + QUEUE_POLICY too
+                                  #        - QueueLogicalId 'QUEUE' (def: 'FUNCTION{EVENT}Queue'): with Type 'SQS'
+
+AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT: Type 'Schedule'
+                                  #  - same as Type 'EventBridgeRule' but with RULE.ScheduleExpression
+                                  #  - does not have Properties: EventBusName, Pattern, InputPath|InputTransformer, Target.Id
+                                  #  - has additional Properties: Schedule, Description, Enabled BOOL (alternative to State STR)
+
+AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT:
+                                  #  - Type 'ScheduleV2': create SCHEDULE with TARGET FUNCTION and related ROLE 'SCHEDULERole'
+                                  #  - Properties:
+                                  #     - Description, State, GroupName, StartDate|EndDate, FlexibleTimeWindow,
+                                  #       Input, ScheduleExpression[Timezone], RoleArn, RetryPolicy, KmsKeyArn
+                                  #     - Name (def: 'FUNCTION{EVENT}')
+                                  #     - OmitName BOOL (def: false): set Name as random ID
+                                  #     - DeadLetterConfig: like Type 'EventBridgeRule' (see its doc)
+                                  #     - PermissionsBoundary: on ROLE
+
+AWS::Serverless::Connector        #Can be used with:
+                                  #  - Source: RULE (RESOURCE_REF.Arn)
+                                  #  - Destination: FUNCTION (RESOURCE_REF.Arn)
+                                  #  - Permissions 'Write'
+                                  #Transformed to a PERMISSION on FUNCTION:
+                                  #  - allowing SERVICE events.amazonaws.com
+                                  #  - to lambda:InvokeFunction
+                                  #  - SourceArn RULE_ARN
+
+                                  ┌─────────────────────────────────┐
+                                  │   EVENTBRIDGE TARGET COMPOSER   │
+                                  └─────────────────────────────────┘
+
+RULE ENHANCED COMPONENT ==>       #Can connect to FUNCTION to create TARGET + Lambda PERMISSION
+
+SCHEDULE ENHANCED COMPONENT ==>   #Can connect to FUNCTION to create SCHEDULE_TARGET + SCHEDULE_TARGET.RoleArn ROLE
+
+                                  ┌────────────────────────┐
                                   │   LOCAL MAIN SAM CLI   │
                                   └────────────────────────┘
 
