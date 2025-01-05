@@ -176,6 +176,8 @@ CUSTOM BUS ==>                    #Other BUSs receiving EVENTs from PutEvents() 
                                   │   DEFAULT AUTH   │
                                   └──────────────────┘
 
+PACTION events:PutEvents          #On default BUS, automatically allowed for other AWS SERVICEs
+
 COND_KEY events:
  detail.userIdentity.principalId  #DETAIL.userIdentity.principalId. For PutRule()
 COND_KEY
@@ -387,10 +389,10 @@ PutPartnerEvents()                #Req: EVENTS
                                   │   EVENT IAC   │
                                   └───────────────┘
 
+EventBus.grantAllPutEvents
+ (YGRANTABLE)->CGRANT             #Allows PACTION events:PutEvents() on any BUS
 ICBUS.grantPutEventsTo
  (YGRANTABLE)->CGRANT             #Allows PACTION events:PutEvents() on BUS
-CBUS.grantAllPutEvents
- (YGRANTABLE)->CGRANT             #Allows PACTION events:PutEvents() on any BUS
 
                                   ┌───────────────┐
                                   │   EVENT SAM   │
@@ -514,8 +516,8 @@ RULE.ScheduleExpression           #See EventBridge Scheduler doc
                                   │   RULE AUTH   │
                                   └───────────────┘
 
-RULE.RoleArn                      #'ROLE_ARN' assumed by the RULE
-                                  #Def: use current PRINCIPAL
+RULE.RoleArn                      #Default TARGET.RoleArn
+                                  #Def: Service.Principal 'events.amazonaws.com'
 
 COND_KEY events:creatorAccount    #RULE.CreatedBy. For Put|Enable|Disable|Delete|DescribeRule(), Put|RemoveTargets|ListTargetsByRule(), *Tag*()
 
@@ -790,12 +792,12 @@ SANDBOX ==>                       #In UI, can test TARGET.InputPath|InputTransfo
 
 TARGET.RoleArn                    #'ROLE_ARN' used to call TARGET
                                   #Must be assumable by Principal.Service 'events.amazonaws.com'
-                                  #Should use COND_KEY aws:SourceArn RULE_ARN, aws:SourceAccount ACCOUNT_ID
-                                  #Must be used instead of RULE.RoleArn if both:
-                                  #  - cross-ACCOUNT
-                                  #  - access granted to ORG, not ACCOUNT
-                                  #Def: Principal.Service 'events.amazonaws.com' calls directly
+                                  #  - COND_KEY aws:SourceArn RULE_ARN, aws:SourceAccount ACCOUNT_ID
+                                  #Def: Principal.Service 'events.amazonaws.com'
                                   #Which permission is required is TARGET_TYPE-specific
+                                  #Some TARGET_TYPEs use resource-based POLICYs, and ignore TARGET.RoleArn
+                                  #  - Principal.Service 'events.amazonaws.com'
+                                  #  - COND_KEY aws:SourceArn RULE_ARN, aws:SourceAccount ACCOUNT_ID
 
 COND_KEY events:TargetArn         #TARGET.Arn, as 'ARN'_ARR. For PutTargets()
 
@@ -954,9 +956,14 @@ TARGET.Arn                        #EventBridge 'BUS_ARN'. Calls PutEvents()
                                   │   TARGET BUS AUTH   │
                                   └─────────────────────┘
 
-PACTION events:PutEvents          #Must be allowed for TARGET.Arn on target BUS2
-                                  #Must use COND_KEY aws:SourceArn BUS_ARN
-                                  #Usually only needed if cross-REGION|ACCOUNT, thanks to default BUS.Policy
+PACTION events:PutEvents          #Must be allowed, if TARGET.Arn on target BUS2
+                                  #Can use either:
+                                  #  - TARGET.RoleArn
+                                  #  - BUS_POLICY
+                                  #     - COND_KEY aws:SourceArn BUS_ARN, aws:SourceAccount
+                                  #If cross-ACCOUNT:
+                                  #  - must use both
+                                  #  - does not use RULE.RoleArn (as opposed to TARGET.RoleArn)
 
 COND_KEY events:eventBusInvocation#'BOOL'. Whether PutEvents() was called by a TARGET with Arn 'BUS_ARN'
                                   #For PutEvents()
@@ -971,7 +978,7 @@ new EventBus
  (ICBUS[, CBUS_TARGET_OPTS])      #CTARGET
 CBUS_TARGET_OPTS.*                #CTARGET_OPTS.*
 CBUS_TARGET_OPTS.role             #ICROLE (def: new singleton ROLE) of TARGET.RoleArn
-                                  #Automatically adds permissions as describe above (no COND_KEY aws:SourceArn)
+                                  #Automatically adds permissions as describe above
 
                                   ┌────────────────────┐
                                   │   TARGET BUS SAM   │
@@ -1059,6 +1066,7 @@ MESSAGE_ATTRS.IS_PAYLOAD_TRUNCATED#'BOOL'
 PACTION sqs:SendMessage           #Must be allowed on QUEUE
                                   #  - Principal.Service 'events.amazonaws.com'
                                   #  - COND_KEY aws:SourceArn BUS_ARN|RULE_ARN
+                                  #If cross-ACCOUNT, must be done on the QUEUE_POLICY
 
 PACTION kms:*                     #Also when SQS-KMS (see SQS doc)
 
@@ -1874,7 +1882,7 @@ PIPE.DesiredState                 #Updating whether 'RUNNING' or 'STOPPED'
 PIPE.RoleArn                      #'ROLE_ARN' used to interact with PIPE.Source|Enrichment|Target
                                   #Which permission is required is SERVICE-specific
                                   #Must be assumable by Principal.Service 'pipes.amazonaws.com'
-                                  #Should use COND_KEY aws:SourceArn PIPE_ARN, aws:SourceAccount ACCOUNT_ID
+                                  #  - COND_KEY aws:SourceArn PIPE_ARN, aws:SourceAccount ACCOUNT_ID
 
 PACTION iam:PassRole              #Required on current PRINCIPAL
                                   #Should use COND_KEY iam:PassedToService 'pipes.amazonaws.com'
@@ -2266,11 +2274,11 @@ S3_LOGGING.OutputFormat           #Always 'json'
                                   └──────────────────┘
 
 PACTION logs:CreateLogStream
- |PutLogEvents                    #Must be allowed on LOG_GROUP, for LOGGING.CloudwatchLogsLogDestination
+ |PutLogEvents                    #Must be allowed for PIPE.RoleArn on LOG_GROUP, if LOGGING.CloudwatchLogsLogDestination
 
-PACTION firehose:PutRecord[Batch] #Must be allowed on DELIVERY_STREAM, for LOGGING.FirehoseLogDestination
+PACTION firehose:PutRecord[Batch] #Must be allowed for PIPE.RoleArn on DELIVERY_STREAM, if LOGGING.FirehoseLogDestination
 
-PACTION s3:PutObject              #Must be allowed on BUCKET, for LOGGING.S3LogDestination
+PACTION s3:PutObject              #Must be allowed for PIPE.RoleArn on BUCKET, if LOGGING.S3LogDestination
 
 PACTION                           #If LOGGING.IncludeExecutionData ['ALL'] + PIPE.KmsKeyIdentifier set,
  kms:Decrypt|GenerateDataKey      #must be allowed to both:
@@ -2656,10 +2664,10 @@ aws.scheduler.attempt-number      #NUM + 1 of retries
 
 SCHEDULE_TARGET.RoleArn           #'ROLE_ARN' used to call SCHEDULE_TARGET's RESOURCE
                                   #Must be assumable by Principal.Service 'scheduler.amazonaws.com'
-                                  #Should use COND_KEY aws:SourceArn SCHEDULE_ARN, aws:SourceAccount ACCOUNT_ID
+                                  #  - COND_KEY aws:SourceArn SCHEDULE_ARN, aws:SourceAccount ACCOUNT_ID
 
 PACTION iam:PassRole              #Required on current PRINCIPAL
-                                  #Should use COND_KEY iam:PassedToService 'scheduler.amazonaws.com'
+                                  #COND_KEY iam:PassedToService 'scheduler.amazonaws.com'
 
 AmazonEventBridgeScheduler
  FullAccess
@@ -2715,8 +2723,9 @@ MESSAGE_ATTRS.SCHEDULED_TIME      #'DATE'
                                   │   DLQ AUTH   │
                                   └──────────────┘
 
-PACTION sqs:SendMessage
-PACTION kms:*                     #Like EventBridge Rules (see its doc) but with Principal.Service 'scheduler.amazonaws.com'
+PACTION sqs:SendMessage           #Like EventBridge Rules (see its doc) but with:
+PACTION kms:*                     #  - Principal.Service 'scheduler.amazonaws.com'
+                                  #  - COND_KEY aws:SourceArn SCHEDULE_ARN
 
                                   ┌─────────────┐
                                   │   DLQ IAC   │
@@ -3358,16 +3367,14 @@ PIPE.Enrichment                   #'FUNC_ARN'. Calls Invoke()
                                   │   LAMBDA EVENTBRIDGE SOURCE AUTH   │
                                   └────────────────────────────────────┘
 
-PACTION lambda:InvokeFunction     #Must be allowed on FUNC_ARN for TARGET|PIPE.RoleArn
-                                  #Principal.Service 'events|pipes|scheduler.amazonaws.com'
-                                  #COND_KEY aws:SourceArn RULE_ARN|PIPE_ARN
+PACTION lambda:InvokeFunction     #Must be allowed on FUNC_ARN for PIPE.RoleArn
 
                                   ┌───────────────────────────────────┐
                                   │   LAMBDA EVENTBRIDGE SOURCE IAC   │
                                   └───────────────────────────────────┘
 
-new LambdaEnrichment
- (ICANYFUNC[, OPTS])              #CPIPE_ENRICH
+new LambdaEnrichment              #CPIPE_ENRICH
+ (ICANYFUNC[, OPTS])              #Automatically allows permissions as described above
 OPTS.inputTransformation          #CPIPE_INPUT
 
                                   ┌───────────────────────────────┐
@@ -3391,7 +3398,11 @@ QUERY EVENTBRIDGE                 #JMESPath 'QUERY' (see its doc) for REQ.detail
                                   │   LAMBDA EVENTBRIDGE TARGET AUTH   │
                                   └────────────────────────────────────┘
 
-PACTION lambda:InvokeFunction     #Same as above
+PACTION lambda:InvokeFunction     #Must be allowed on FUNC_ARN for:
+                                  #  - TARGET: using FUNCTION_POLICY (not TARGET.RoleArn)
+                                  #     - Principal.Service 'events.amazonaws.com'
+                                  #     - COND_KEY aws:SourceArn RULE_ARN
+                                  #  - PIPE|SCHEDULE_TARGET.RoleArn
 
                                   ┌───────────────────────────────────┐
                                   │   LAMBDA EVENTBRIDGE TARGET IAC   │
@@ -3684,6 +3695,7 @@ PIPE_DEST.SqsQueueParameters
 PACTION sqs:SendMessage           #Must be allowed on QUEUE for TARGET|PIPE|SCHEDULE.RoleArn
                                   #Principal.Service 'events|pipes|scheduler.amazonaws.com'
                                   #COND_KEY aws:SourceArn RULE_ARN|PIPE_ARN|SCHEDULE_ARN
+                                  #With TARGET, must use QUEUE_POLICY???
 
                                   ┌────────────────────────────────┐
                                   │   SQS EVENTBRIDGE TARGET IAC   │
