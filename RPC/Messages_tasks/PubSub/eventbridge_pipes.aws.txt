@@ -1,0 +1,661 @@
+
+                                  ┏━━━━━━━━━━━━━━━━━━━━━━━┓
+                                  ┃   EVENTBRIDGE_PIPES   ┃
+                                  ┗━━━━━━━━━━━━━━━━━━━━━━━┛
+
+VERSION ==>                       #2024-12-20
+
+SUMMARY ==>                       #Pipe: role, encryption
+                                  #Source: SQS|DynamoDB|Kinesis|Kafka|MQ, batch, filter
+                                  #Enrichment: Lambda|Step Functions|API Gateway|HTTP, input transform
+                                  #Target: type (AWS services, HTTP, cross-BUS), parameters, input transform
+                                  #Logging: CloudWatch Logs|S3|Firehose, level
+
+                                  ┌─────────┐
+                                  │   API   │
+                                  └─────────┘
+
+SERVICE_DOMAIN                    #'pipes.REGION.amazonaws.com'
+
+FORMAT ==>                        #REST API
+                                  #Request:
+                                  #  - POST|PUT: path parameters + JSON
+                                  #  - GET|DELETE: path parameters + query parameters (camelCase'd)
+                                  #Response: JSON
+
+PAGINATION ==>                    #Uses REQ.Limit (def|max: 100) + REQ|RES.NextToken
+                                  #No pagination: ListTagsForResource()
+
+PRICING ==>                       #1$ per 2.5e6 PEVENTs
+                                  #  - only ones matching FILTERS
+                                  #  - multiplied by NUM of 64KB chunks
+
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonEventBridgePipesFullAccess  #AWS managed POLICY. Grants all 'pipes:*' PACTIONs
+AmazonEventBridgePipes
+ OperatorAccess                   #AWS managed POLICY. Grants Start|Stop|List|DescribePipe() + ListTagsForResource()
+AmazonEventBridgePipes
+ ReadOnlyAccess                   #AWS managed POLICY. Grants all readonly 'pipes:*' PACTIONs
+
+                                  ┌──────────┐
+                                  │   PIPE   │
+                                  └──────────┘
+
+PIPE                              #Like:
+                                  #  - Lambda EVENT_SOURCE
+                                  #  - EventBridge BUS
+                                  #  - single RULE
+                                  #  - single TARGET
+                                  #But:
+                                  #  - cheaper
+                                  #  - simpler, but fewer features
+                                  #  - more advanced transformation logic
+                                  #  - more options for some TARGETs
+                                  #Max 1e3 (soft) per ACCOUNT
+
+PIPE_EXEC                         #Single batch from PIPE.Source being processed
+                                  #Max 3e3 (REGION-specific) (soft) PIPE_EXECs at once per ACCOUNT
+
+PIPE.Arn                          #'PIPE_ARN'. 'arn:aws:pipes:REGION:ACCOUNT_ID:pipe/PIPE'
+PIPE.Name                         #'PIPE'
+                                  #Must be [:alnum:].-_ and max 64 chars
+PIPE.Description                  #STR. Max 512 chars
+PIPE.CreationTime                 #DATE_NUM
+PIPE.LastModifiedTime             #DATE_NUM
+
+PIPE.CurrentState                 #One of:
+                                  #  - CREATING, CREATE[_ROLLBACK]_FAILED
+                                  #  - UPDATING, UPDATE[_ROLLBACK]_FAILED
+                                  #  - STARTING, RUNNING, START_FAILED
+                                  #  - STOPPING, STOPPED, STOP_FAILED
+                                  #  - DELETING, DELETE[_ROLLBACK]_FAILED
+PIPE.StateReason                  #STR
+PIPE.DesiredState                 #Updating whether 'RUNNING' or 'STOPPED'
+                                  #By default, 'RUNNING' (more info with DescribePipe())
+
+                                  ┌───────────────┐
+                                  │   PIPE AUTH   │
+                                  └───────────────┘
+
+PIPE.RoleArn                      #'ROLE_ARN' used to interact with PIPE.Source|Enrichment|Target
+                                  #Which permission is required is SERVICE-specific
+                                  #Must be assumable by Principal.Service 'pipes.amazonaws.com'
+                                  #  - COND_KEY aws:SourceArn PIPE_ARN, aws:SourceAccount ACCOUNT_ID
+
+PACTION iam:PassRole              #Required on current PRINCIPAL
+                                  #Should use COND_KEY iam:PassedToService 'pipes.amazonaws.com'
+
+AmazonEventBridgePipesFullAccess
+AmazonEventBridgeFullAccess       #Also allow PACTION iam:PassRole, as described above
+
+                                  ┌──────────────┐
+                                  │   PIPE API   │
+                                  └──────────────┘
+
+POST /v1/pipes/PIPE               #Req:
+CreatePipe()                      #  - no Arn, Name, *Time, CurrentState, StateReason
+                                  #Res: PIPE
+                                  #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
+                                  #  - no Enrichment, Source, StateReason, Target
+                                  #  - no Tags
+PUT /v1/pipes/PIPE                #Req:
+UpdatePipe()                      #  - no Arn, Name, *Time, CurrentState, StateReason
+                                  #  - no Source
+                                  #  - no SourceParameters:
+                                  #     - *Parameters.StartingPosition*
+                                  #     - *MQBrokerParameters.QueueName
+                                  #     - RabbitMQBrokerParameters.VirtualHost
+                                  #     - *KafkaParameters.TopicName|ConsumerGroupID
+                                  #     - SelfManagedKafkaParameters.AdditionalBootstrapServers|
+                                  #  - no Tags
+                                  #Res: PIPE
+                                  #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
+                                  #  - no Enrichment, Source, StateReason, Target
+                                  #  - no Tags
+POST /v1/pipes/PIPE/start         #Req: PIPE
+StartPipe()                       #  - only Name
+                                  #Res: PIPE
+                                  #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
+                                  #  - no Enrichment, Source, StateReason, Target
+                                  #  - no Tags
+POST /v1/pipes/PIPE/stop          #Req: PIPE
+StopPipe()                        #  - only Name
+                                  #Res: PIPE
+                                  #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
+                                  #  - no Enrichment, Source, StateReason, Target
+                                  #  - no Tags
+GET /v1/pipes                     #Req: PIPE
+ListPipes()                       #  - only CurrentState, DesiredState
+                                  #  - only Name|Source|Target -> NamePrefix|SourcePrefix|TargetPrefix
+                                  #Res: Pipes PIPE_ARR
+                                  #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
+                                  #  - no Tags
+GET /v1/pipes/PIPE                #Req: PIPE
+DescribePipe()                    #  - only Name
+                                  #Res: PIPE
+DELETE /v1/pipes/PIPE             #Req: PIPE
+DeletePipe()                      #  - only Name
+                                  #Res: PIPE
+                                  #  - no Description, *Parameters, KmsKeyIdentifier, LogConfiguration, RoleArn
+                                  #  - no Enrichment, Source, StateReason, Target
+                                  #  - no Tags
+
+                                  ┌──────────────┐
+                                  │   PIPE IAC   │
+                                  └──────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Name, Description, DesiredState, RoleArn
+                                  #RESATTRs: Arn, CreationTime, LastModifiedTime, CurrentState, StateReason
+
+GENERATE TEMPLATE ==>             #In UI, can generate CloudTemplate template from existing PIPEs
+                                  #  - also its related API_DEST|BUS (if used as a TARGET) and ROLE
+
+new Pipe(...CARGS, CPIPE_OPTS)    #
+Pipe.fromPipeName
+ (...CARGS, 'PIPE')->ICPIPE       #
+
+ICPIPE[_OPTS].pipeName            #'PIPE'[_TK]
+ICPIPE.pipeArn                    #'PIPE_ARN'_CSATTR
+
+CPIPE_OPTS
+ .description|desiredState        #PIPE.*
+CPIPE_OPTS.role
+ICPIPE.pipeRole                   #ICROLE (def: new one assumable by 'pipes.amazonaws.com'). PIPE.RoleArn
+
+                                  ┌──────────────────┐
+                                  │   PIPE METRICS   │
+                                  └──────────────────┘
+
+AWS/Pipes/Concurrency             #NUM of PIPE_EXECs
+                                  #DVAR AwsAccountId 'ACCOUNT_ID'
+AWS/Pipes/ExecutionThrottled      #NUM of PIPE_EXECs throttled
+                                  #DVAR AwsAccountId 'ACCOUNT_ID'
+AWS/Pipes/ExecutionTimeout        #NUM of PIPE_EXECs timed out
+AWS/Pipes/ExecutionFailed         #NUM of PIPE_EXECs failed
+AWS/Pipes/ExecutionPartiallyFailed#NUM of PIPE_EXECs partially failed
+
+AWS/Pipes/Duration                #Duration (in ms) of PIPE_EXECs
+
+DVAR PipeName                     #'PIPE'
+                                  #With all AWS/Pipes/* METRICs except Concurrency
+                                  #Also sent as a metric TELEMETRY_ENTITY
+
+                                  ┌──────────────────┐
+                                  │   PIPE LOGGING   │
+                                  └──────────────────┘
+
+CLOUDTRAIL ==>                    #*Pipe*() are logged with CloudTrail as data EVENTs
+                                  #PIPE is LOG_RESOURCE
+
+                                  ┌────────────┐
+                                  │   SOURCE   │
+                                  └────────────┘
+
+PIPE.Source                       #'ARN' where PEVENTs are pulled from. SERVICE-specific.
+                                  #Each SERVICE documented it in its respective docs
+                                  #Use same infrastructure as Lambda EVENT_SOURCE under-the-hood
+
+PIPE.SourceParameters             #PIPE_SRC
+PIPE_SRC.*Parameters              #OBJ. SERVICE-specific options
+                                  #Each SERVICE documented it in its respective docs
+
+BATCHING ==>                      #Most sources produce ARRs of messages
+                                  #  - i.e. an ARR is sent to TARGET
+                                  #ARR cannot be larger than TARGET's max length for inputs
+                                  #  - e.g. 10 with SQS, 1e4 with CloudWatch Logs, etc.
+                                  #  - if target does not support ARR of messages as input, source but produce use batch size 1
+
+                                  ┌────────────────┐
+                                  │   SOURCE IAC   │
+                                  └────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Source, SourceParameters: *Parameters
+
+CPIPE_OPTS.source                 #CPIPE_SRC. PIPE.Source + PIPE_SRC.*Parameters
+                                  #Each SERVICE documented it in its respective docs
+
+                                  ┌───────────┐
+                                  │   EVENT   │
+                                  └───────────┘
+
+PEVENT                            #Input received from PIPE.Source
+
+PEVENT.DATA                       #Main input. Value is SERVICE-specific
+                                  #Key name is also SERVICE-specific
+                                  #Usually JSON stringified (if valid JSON) or base64'd
+                                  #Can use data.VARR in both FILTERS and ENRICH|PIPE_DEST.InputTemplate
+
+PEVENT.*                          #Additional available properties are SERVICE-specific, except the ones below
+
+PEVENT.eventSource                #'aws:SERVICE'
+PEVENT.eventSourceArn             #'ARN'. SERVICE-specific
+
+PEVENT.awsRegion                  #'REGION'. Only with Kinesis, SQS, DynamoDB
+PEVENT.eventSourceKey             #Only with MQ|Kafka
+PEVENT.eventVersion
+PEVENT.eventID
+PEVENT.eventName                  #Only with Kinesis, DynamoDB
+PEVENT.invokeIdentityArn          #Only with Kinesis
+
+                                  ┌───────────────────┐
+                                  │   EVENT METRICS   │
+                                  └───────────────────┘
+
+AWS/Pipes/EventCount              #NUM of PEVENTs
+AWS/Pipes/EventSize               #Size (in bytes) of PEVENTs
+
+                                  ┌────────────────┐
+                                  │   ENRICHMENT   │
+                                  └────────────────┘
+
+PIPE.Enrichment                   #'ARN'. SERVICE-specific, documented in their respective docs
+                                  #Sets PEVENT using the result of an AWS SERVICE call
+                                  #Can return a batch ARR of items
+                                  #Can return empty ARR to skip
+                                  #Max response 6MB
+
+PIPE.EnrichmentParameters         #ENRICH
+ENRICH.InputTemplate              #Like PIPE_DEST.InputTemplate but for the input passed to PIPE.Enrichment
+
+                                  ┌────────────────────┐
+                                  │   ENRICHMENT IAC   │
+                                  └────────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Enrichment, EnrichmentParameters
+
+CPIPE_OPTS.enrichment             #CPIPE_ENRICH. PIPE.Enrichment + PIPE.EnrichmentParameters
+                                  #Each SERVICE documented it in its respective docs
+
+CPIPE_INPUT                       #See below. ENRICH.InputTemplate
+
+                                  ┌────────────────────────┐
+                                  │   ENRICHMENT METRICS   │
+                                  └────────────────────────┘
+
+AWS/Pipes/EnrichmentStageDuration #Duration (in ms) of ENRICH
+AWS/Pipes/EnrichmentStageFailed   #NUM of ENRICH failed
+
+                                  ┌────────────┐
+                                  │   FILTER   │
+                                  └────────────┘
+
+PIPE_SRC.FilterCriteria           #'FILTERS_JSON' (see EventBridge Rules doc)
+ .Filters[*].Pattern              #Def: none, i.e. matches any PEVENT
+                                  #Max 5 items
+                                  #Done after PIPE.Enrichment
+                                  #Cannot use:
+                                  #  - FILTER.anything-but FILTER2
+                                  #  - FILTER.wildcard
+                                  #  - PEVENT: eventSource*, eventVersion, eventID, eventName, awsRegion, invokeIdentityArn
+
+                                  ┌────────────────┐
+                                  │   FILTER IAC   │
+                                  └────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: SourceParameters: FilterCriteria: Filters[*]: Pattern STR
+
+CPIPE_OPTS.filter                 #new Filter(CFILTERS_ARR). PIPE_SRC.FilterCriteria
+CFILTERS                          #FilterPattern.fromObject(FILTERS_OBJ)
+
+                                  ┌────────────┐
+                                  │   TARGET   │
+                                  └────────────┘
+
+PIPE.Target                       #'ARN' where PEVENTs are sent to. TARGET_TYPE-specific.
+                                  #Each SERVICE documented it in its respective docs
+                                  #Run at least once: rarely can run twice (i.e. should be idempotent)
+
+PIPE.TargetParameters             #PIPE_DEST
+PIPE_DEST.*Parameters             #OBJ. TARGET_TYPE-specific options
+                                  #Some TARGET_TYPEs do not have any
+                                  #Each SERVICE documented it in its respective docs
+                                  #Most values can be 'JSONPATH'
+                                  #  - unless documented as not
+                                  #  - only STRs, and not enums
+                                  #  - references PEVENT (before any transformation)
+
+PIPE_DEST.InputTemplate           #STR used as input
+                                  #Can be ''
+                                  #Can include <JSONPATH> anywhere
+                                  #Max 8KB
+
+RETRY ==>                         #On ENRICH|TARGET failure, retries with exponential backoff
+                                  #Retries on partial batch failures (e.g. with SQS)
+                                  #On TARGET retry, ENRICH is re-performed
+                                  #Retries until PEVENT expires (which is source-specific)
+                                  #For client-side errors, also takes into account source-specific retry configuration
+                                  #Does not retry if TARGET call is done async (e.g. Lambda InvocationType 'Event')
+
+                                  ┌────────────────┐
+                                  │   TARGET IAC   │
+                                  └────────────────┘
+
+AWS::Pipes::Pipe                  #RESPROPs: Target, TargetParameters: InputTemplate, *Parameters
+
+CPIPE_OPTS.target                 #CPIPE_TARGET. PIPE.Target + PIPE_DEST.*Parameters
+                                  #Each SERVICE documented it in its respective docs
+
+CPIPE_INPUT                       #PIPE_DEST.InputTemplate
+InputTransformation.fromEventPath
+ ('JSONPATH')->CPIPE_INPUT        #'<JSONPATH>'
+InputTransformation.fromText(STR)
+ ->CPIPE_INPUT                    #STR
+InputTransformation.fromObject
+ (OBJ)->CPIPE_INPUT               #'OBJ_JSON'
+
+TargetParameter.fromJsonPath
+ ('JSONPATH')->'<JSONPATH>'       #
+
+                                  ┌────────────────────┐
+                                  │   TARGET METRICS   │
+                                  └────────────────────┘
+
+AWS/Pipes/Invocations             #NUM of TARGET calls
+                                  #DVAR AwsAccountId 'ACCOUNT_ID'
+AWS/Pipes/TargetStageFailed       #NUM of TARGET calls failed
+AWS/Pipes/
+ TargetStagePartiallyFailed       #NUM of TARGET calls partially failed
+AWS/Pipes/TargetStageSkipped      #NUM of TARGET calls were skipped, e.g. due to ENRICH returning empty ARR
+
+AWS/Pipes/TargetStageDuration     #Duration (in ms) of TARGETs
+
+                                  ┌──────────────┐
+                                  │   JSONPATH   │
+                                  └──────────────┘
+
+JSONPATH                          #Like EventBridge Rules (see its doc) but targetting PEVENT
+
+aws.pipes.*                       #Can be used as:
+                                  #  - 'JSONPATH'
+                                  #  - <aws.pipes.*> in PIPE_DEST|ENRICH.InputTemplate
+aws.pipes.pipe-arn                #'PIPE_ARN'
+aws.pipes.pipe-name               #'PIPE'
+aws.pipes.source-arn              #PIPE.Source
+aws.pipes.enrichment-arn          #PIPE.Enrichment
+aws.pipes.target-arn              #PIPE.Target
+aws.pipes.event                   #PEVENT
+aws.pipes.event.json              #Same but undefined if not JSON
+aws.pipes.event.ingestion-time    #Time when being processed
+
+                                  ┌──────────────────┐
+                                  │   JSONPATH IAC   │
+                                  └──────────────────┘
+
+DynamicInput.*(...)               #RV. To use inside InputTransformation.from*(...)
+
+DynamicInput.fromEventPath
+ ('JSONPATH')                     #'<JSONPATH>'
+DynamicInput.fromPipeVariable
+ ('<aws.pipes.*>')
+DynamicInput.pipeArn|pipeName
+ |sourceArn|enrichmentArn
+ |targetArn|event|eventJson
+ |eventIngestionTime              #'<aws.pipes.*>'
+
+                                  ┌─────────┐
+                                  │   BUS   │
+                                  └─────────┘
+
+PIPE.Target                       #EventBridge 'BUS_ARN'. Calls PutEvents() (see EventBridge Rules doc)
+                                  #Must be in same REGION|ACCOUNT
+                                  #Input is 'GEVENT_JSON'
+                                  #Cannot chain|forward to a third BUS
+                                  #Max batch size: 10 (PutEvents()'s limit)
+
+PIPE_DEST
+ .EventBridgeEventBusParameters
+ .Time|Source|DetailType|Resources#EVENT.*
+PIPE_DEST
+ .EventBridgeEventBusParameters   #EVENTS.EndpointId
+ .EndpointId                      #Cannot be 'JSONPATH'
+
+                                  ┌──────────────┐
+                                  │   BUS AUTH   │
+                                  └──────────────┘
+
+PACTION events:PutEvents          #Must be allowed for PIPE.RoleArn, on target BUS2
+
+                                  ┌─────────────┐
+                                  │   BUS IAC   │
+                                  └─────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: EventBridgeEventBusParameters
+
+new EventBridgeTarget             #CPIPE_TARGET
+ (ICBUS[, OPTS])                  #Adds permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.time|source|detailType
+ |resources|endpointId            #PIPE_DEST.EventBridgeEventBusParameters.*
+
+                                  ┌─────────────────┐
+                                  │   HTTP SOURCE   │
+                                  └─────────────────┘
+
+PIPE.Enrichment                   #'API_DEST_ARN' (see EventBridge Rules doc)
+                                  #Source batch size must be 1
+
+ENRICH.HttpParameters             #HTTP_TARGET (see EventBridge Rules doc)
+
+                                  ┌──────────────────────┐
+                                  │   HTTP SOURCE AUTH   │
+                                  └──────────────────────┘
+
+PACTION
+ events:InvokeApiDestination      #Must be allowed on API_DEST for PIPE.RoleArn
+
+                                  ┌─────────────────────┐
+                                  │   HTTP SOURCE IAC   │
+                                  └─────────────────────┘
+
+new ApiDestinationEnrichment      #CPIPE_ENRICH
+ (ICAPI_DEST[, OPTS])             #Automatically allows permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.pathParameterValues
+ |queryStringParameters
+ |headerParameters                #ENRICH.HttpParameters
+
+                                  ┌─────────────────┐
+                                  │   HTTP TARGET   │
+                                  └─────────────────┘
+
+PIPE.Target                       #'API_DEST_ARN' (see EventBridge Rules doc)
+PIPE_DEST.HttpParameters          #HTTP_TARGET (see EventBridge Rules doc). Request parameters
+
+                                  ┌──────────────────────┐
+                                  │   HTTP TARGET AUTH   │
+                                  └──────────────────────┘
+
+PACTION
+ events:InvokeApiDestination      #Must be allowed on API_DEST for PIPE.RoleArn
+
+                                  ┌─────────────────────┐
+                                  │   HTTP TARGET IAC   │
+                                  └─────────────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: Target, TargetParameters: HttpParameters
+
+new ApiDestinationTarget          #CPIPE_TARGET
+ (ICAPI_DEST[, OPTS])             #Adds permissions as described above
+OPTS.inputTransformation          #CPIPE_INPUT
+OPTS.pathParameterValues
+ |queryStringParameters
+ |headerParameters                #PIPE_DEST.HttpParameters
+
+                                  ┌────────────────┐
+                                  │   ENCRYPTION   │
+                                  └────────────────┘
+
+PIPE.KmsKeyIdentifier             #'KMS_KEY_ARN|MID' (def: '', i.e. AWS managed). Encrypt PEVENTs at rest
+
+                                  ┌─────────────────────┐
+                                  │   ENCRYPTION AUTH   │
+                                  └─────────────────────┘
+
+PACTION kms:Decrypt               #If PIPE.KmsKeyIdentifier set, must be allowed for PIPE.Target
+ |GenerateDataKey|DescribeKey     #COND_KEY kms:EncryptionContext:aws:pipe:arn PIPE_ARN
+                                  #Condition['ForAnyValues:StringEquals']['kms:EncryptionContextKeys'] ['aws:pipe:arn']
+
+                                  ┌────────────────────┐
+                                  │   ENCRYPTION IAC   │
+                                  └────────────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: KmsKeyIdentifier
+
+                                  ┌─────────────┐
+                                  │   LOGGING   │
+                                  └─────────────┘
+
+PIPE.LogConfiguration             #LOGGING
+                                  #Logs PIPE-related lifecycle to CloudWatch logs, Firehose, or S3
+                                  #'PIPE' is also sent as a logging TELEMETRY_ENTITY
+
+LOGGING.Level                     #One of:
+                                  #  - 'OFF' (def)
+                                  #  - 'ERROR': STATE '[PARTIALLY_]FAILED', 'THROTTLED', 'TIMEOUT'
+                                  #  - 'INFO': also:
+                                  #     - STATE 'STARTED|SUCCEEDED' for STEP 'EXECUTION' and 'ENRICHMENT|TARGET_STAGE'
+                                  #     - STATE 'SKIPPED' for STEP 'ENRICHMENT_INVOCATION'
+                                  #  - 'TRACE': all
+
+LOGGING.IncludeExecutionData      #Either:
+                                  #  - undefined (def): omit LOG_PAYLOAD.payload|awsRequest|awsResponse
+                                  #     - reason: bigger, and might contain secret values
+                                  #  - ['ALL']: inverse
+
+LOGGING
+ .CloudwatchLogsLogDestination
+ .LogGroupArn                     #'LOG_GROUP_ARN'
+
+LOGGING.FirehoseLogDestination
+ .DeliveryStreamArn               #'DELIVERY_STREAM_ARN'
+
+LOGGING.S3LogDestination          #S3_LOGGING
+S3_LOGGING.BucketName             #'BUCKET'
+S3_LOGGING.Prefix                 #STR (def: none) prefixed to 'OBJECT'
+S3_LOGGING.BucketOwner            #'ACCOUNT_ID'. Required
+S3_LOGGING.OutputFormat           #Always 'json'
+
+                                  ┌──────────────────┐
+                                  │   LOGGING AUTH   │
+                                  └──────────────────┘
+
+PACTION logs:CreateLogStream
+ |PutLogEvents                    #Must be allowed for PIPE.RoleArn on LOG_GROUP, if LOGGING.CloudwatchLogsLogDestination
+
+PACTION firehose:PutRecord[Batch] #Must be allowed for PIPE.RoleArn on DELIVERY_STREAM, if LOGGING.FirehoseLogDestination
+
+PACTION s3:PutObject              #Must be allowed for PIPE.RoleArn on BUCKET, if LOGGING.S3LogDestination
+
+PACTION                           #If LOGGING.IncludeExecutionData ['ALL'] + PIPE.KmsKeyIdentifier set,
+ kms:Decrypt|GenerateDataKey      #must be allowed to both:
+                                  #  - Principal.Service 'delivery.logs.amazonaws.com'
+                                  #  - PIPE.RoleArn (kms:GenerateDataKey only)
+                                  #Condition.StringLike['kms:EncryptionContext:SourceArn'] 'arn:aws:logs:REGION:ACCOUNT_ID:*'
+
+                                  ┌─────────────────┐
+                                  │   LOGGING IAC   │
+                                  └─────────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: LogConfiguration
+
+CPIPE_OPTS.logLevel               #LOGGING.Level (def: 'ERROR')
+CPIPE_OPTS.logIncludeExecutionData#LOGGING.IncludeExecutionData
+CPIPE_OPTS.logDestinations        #CLOGGING_DEST_ARR. LOGGING.*Destination
+
+new CloudwatchLogsLogDestination  #CLOGGING_DEST. LOGGING.CloudwatchLogsLogDestination
+ (ICLOG_GROUP)                    #Automatically allows permissions as described above
+
+new FirehoseLogDestination        #CLOGGING_DEST. LOGGING.FirehoseLogDestination
+ (ICDELIVERY_STREAM)              #Automatically allows permissions as described above
+
+new S3LogDestination(OPTS)        #CLOGGING_DEST. LOGGING.S3LogDestination
+                                  #Automatically allows permissions as described above
+OPTS.bucket                       #ICBUCKET. S3_LOGGING.BucketName
+OPTS.bucketOwner                  #'ACCOUNT_ID' (def: BUCKET's CKRESOURCE.env.account). S3_LOGGING.BucketOwner
+OPTS.prefix|outputFormat          #S3_LOGGING.*
+
+                                  ┌───────────────────┐
+                                  │   LOGGING STEPS   │
+                                  └───────────────────┘
+
+STEP + STATE                      #When LOG_PAYLOAD is produced
+
+STEP 'EXECUTION'                  #ENRICH + TARGET
+STEP 'ENRICHMENT_STAGE'           #ENRICH.InputTemplate + ENRICH call
+STEP 'ENRICHMENT_TRANSFORMATION'  #ENRICH.InputTemplate
+STEP 'ENRICHMENT_INVOCATION'      #ENRICH call
+STEP 'TARGET_STAGE'               #PIPE_DEST.InputTemplate + TARGET call
+STEP 'TARGET_TRANSFORMATION'      #PIPE_DEST.InputTemplate
+STEP 'TARGET_INVOCATION'          #TARGET call
+
+STATE 'STARTED'                   #Called 'ENTERED' with 'ENRICHMENT|TARGET_STAGE'
+STATE 'SUCCEEDED'                 #
+STATE 'FAILED'                    #
+STATE 'PARTIALLY FAILED'          #Only with 'EXECUTION' and 'TARGET_STAGE|INVOCATION'
+STATE 'SKIPPED'                   #Only with 'ENRICHMENT_INVOCATION' and 'TARGET_STAGE|INVOCATION'
+STATE 'THROTTLED'                 #Only with 'EXECUTION'
+STATE 'TIMEOUT'                   #Only with 'EXECUTION'
+
+                                  ┌─────────────────────┐
+                                  │   LOGGING PAYLOAD   │
+                                  └─────────────────────┘
+
+LOG_PAYLOAD                       #One per PEVENT batch
+                                  #Max 256KB if sending to LOG_GROUP
+LOG_PAYLOAD.executionId           #'UUID'
+LOG_PAYLOAD.timestamp             #'DATE'
+LOG_PAYLOAD.resourceArn           #'PIPE_ARN'
+LOG_PAYLOAD.logLevel              #LOGGING.Level
+LOG_PAYLOAD.messageType           #'STEP_STATE'
+LOG_PAYLOAD.payload               #'JSON'. PEVENT batch
+                                  #Only in:
+                                  #  - STATE 'STARTED' for STEP 'EXECUTION'
+                                  #  - STATE 'SUCCEEDED' for STEP 'ENRICHMENT|TARGET_STAGE|TRANSFORMATION'
+LOG_PAYLOAD.awsRequest            #'JSON'. Request to ENRICH|TARGET
+                                  #Only in:
+                                  #  - STATE 'SUCCEEDED|FAILED' for STEP 'ENRICHMENT_INVOCATION'
+                                  #  - STATE 'SUCCEEDED|[PARTIALLY_]FAILED' for STEP 'TARGET_INVOCATION'
+LOG_PAYLOAD.awsResponse           #Same but for response
+LOG_PAYLOAD.truncatedFields       #'VAR'_ARR from LOG_PAYLOAD.VAR that have been truncated to keep LOG_PAYLOAD < 256 KB
+                                  #Done on LOG_PAYLOAD.payload|awsRequest|awsResponse
+
+LOG_PAYLOAD.error                 #LOG_ERROR
+                                  #Only in STATE '[PARTIALLY_]FAILED', 'THROTTLED', 'TIMEOUT'
+LOG_ERROR.httpStatusCode          #STATUS_NUM
+LOG_ERROR.message                 #'MESSAGE'
+LOG_ERROR.details                 #STR
+LOG_ERROR.awsService              #'SERVICE'
+LOG_ERROR.requestId               #'REQ_ID'
+
+                                  ┌──────────┐
+                                  │   TAGS   │
+                                  └──────────┘
+
+RESOURCE_TAGS.resourceArn         #'PIPE_ARN'
+RESOURCE_TAGS.tags
+PIPE.Tags                         #TAGS_OBJ
+
+                                  ┌──────────────┐
+                                  │   TAGS API   │
+                                  └──────────────┘
+
+POST /tags/PIPE_ARN               #Req: RESOURCE_TAGS
+TagResource()                     #Res: empty
+GET /tags/PIPE_ARN                #Req: RESOURCE_TAGS
+ListTagsForResource()             #  - only resourceArn
+                                  #Res: RESOURCE_TAGS
+                                  #  - only tags
+DELETE /tags/PIPE_ARN             #Req: RESOURCE_TAGS
+UntagResource()                   #  - tags OBJ -> tagKeys 'TAG'_ARR
+                                  #Res: empty
+
+                                  ┌──────────────┐
+                                  │   TAGS IAC   │
+                                  └──────────────┘
+
+AWS::Pipes::Pipe                  #Includes RESPROPs: Tags
+
+CPIPE_OPTS.tags                   #PIPE.Tags
