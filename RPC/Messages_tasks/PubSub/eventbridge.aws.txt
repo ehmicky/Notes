@@ -835,7 +835,7 @@ RemoveTargets()                   #Req: TARGET
 AWS::Events::Rule                 #Includes RESPROPs: Targets TARGET_ARR: Id, Arn, *Parameters, Input*, RoleArn
 
 CRULE_OPTS.targets                #CTARGET_ARR
-new CTARGET(..., CTARGET_OPTS)    #... sets TARGET.Arn and TARGET.*Parameters
+new CTARGET(..., CTARGET_OPTS)    #... sets TARGET.Arn|*Parameters|Input*|RoleArn
                                   #TARGET.Id is 'TargetNUM', with NUM auto-incremented
                                   #Available CTARGETs documented in each service
 
@@ -1017,7 +1017,7 @@ AWS::Events::Rule                 #Includes RESPROPs: Targets[*]: RetryPolicy
 
 CTARGET_OPTS.maxEventAge          #DURATION. RETRY_POLICY.MaximumEventAgeInSeconds
                                   #Must also set CTARGET_OPTS.retryAttempts
-CTARGET_OPTS.retryAttempts        #NUM. RETRY_POLICY.MaximumRetryAttempts
+CTARGET_OPTS.retryAttempts        #RETRY_POLICY.MaximumRetryAttempts
 
                                   ┌───────────────────┐
                                   │   RETRY METRICS   │
@@ -2686,7 +2686,20 @@ new Schedule
 
 CSCHEDULE[_OPTS].scheduleName     #'SCHEDULE'[_TK]
 CSCHEDULE.scheduleArn             #'SCHEDULE_ARN'
-CSCHEDULE[_OPTS].group            #'GROUP'
+
+CSCHEDULE_OPTS.description        #SCHEDULE.*
+CSCHEDULE_OPTS.enabled            #BOOL (def: true). SCHEDULE.State
+
+CSCHEDULE[_OPTS].group            #ICGROUP (def: default)
+
+CSCHEDULE_OPTS.schedule           #SCHEDULE.ScheduleExpression[Timezone]. Can be:
+                                  #  - ScheduleExpression.expression(STR[, TIMEZONE])
+                                  #  - ScheduleExpression.at(DATE[, TIMEZONE])
+                                  #  - ScheduleExpression.rate(DURATION)
+                                  #  - ScheduleExpression.cron(OPTS) with OPTS: timezone TIMEZONE,
+                                  #    minute|hour|day|month|weekDay|year (def: '*' or '?')
+
+CSCHEDULE_OPTS.start|end          #DURATION. SCHEDULE.StartDate|EndDate
 
 CSCHEDULE_OPTS.timeWindow         #SCHEDULE.flexibleTimeWindow. Can be:
                                   #  - TimeWindow.off() (def)
@@ -2783,6 +2796,24 @@ AmazonEventBridgeFullAccess       #Also allow PACTION iam:PassRole, as described
 
 AWS::Scheduler::Schedule          #Includes RESPROPs: Target: Arn, *Parameters, Input, RoleArn
 
+CSCHEDULE_OPTS.target             #CSCHEDULE_TARGET. SCHEDULE_TARGET.Arn|*Parameters|Input|RoleArn
+new CSCHEDULE_TARGET
+ (..., CSCHEDULE_TARGET_OPTS)     #Available CSCHEDULE_TARGETs documented in each service
+
+CSCHEDULE_TARGET_OPTS.role        #ICROLE. SCHEDULE_TARGET.RoleArn
+                                  #Def: new singleton ROLE, as described above
+
+CSCHEDULE_TARGET_OPTS.input       #CSCHEDULE_TARGET_INPUT. SCHEDULE_TARGET.Input
+ScheduleTargetInput.fromText(STR)
+ ->CSCHEDULE_TARGET_INPUT         #
+ScheduleTargetInput.fromObject
+ (OBJ)->CSCHEDULE_TARGET_INPUT    #JSON serialized to STR
+
+ContextAttribute.fromName('NAME')
+ContextAttribute.scheduleArn
+ |scheduledTime|executionId       #'<aws.schedule.NAME>'_TK
+ |attemptNumber                   #To use inside ScheduleTargetInput.from*(...)
+
                                   ┌────────────────────┐
                                   │   TARGET METRICS   │
                                   └────────────────────┘
@@ -2807,12 +2838,25 @@ EVENT_TYPE 'Scheduled Event'      #EventBridge EVENT emitted on scheduled event
 SOURCE                            #'aws.events'
 DETAIL                            #SCHEDULE_TARGET.Input
 
-                                  ┌─────────┐
-                                  │   DLQ   │
-                                  └─────────┘
+                                  ┌───────────┐
+                                  │   RETRY   │
+                                  └───────────┘
 
 SCHEDULE_TARGET.RetryPolicy       #RETRY_POLICY. Same as EventBridge Rules (see its doc)
                                   #Truncates SCHEDULE_TARGET.Input if > 256KB
+
+                                  ┌───────────────┐
+                                  │   RETRY IAC   │
+                                  └───────────────┘
+
+AWS::Scheduler::Schedule          #Includes RESPROPs: Target: RetryPolicy
+
+CSCHEDULE_OPTS.maxEventAge        #DURATION. RETRY_POLICY.MaximumEventAgeInSeconds
+CSCHEDULE_OPTS.retryAttempts      #RETRY_POLICY.MaximumRetryAttempts
+
+                                  ┌─────────┐
+                                  │   DLQ   │
+                                  └─────────┘
 
 SCHEDULE_TARGET
  .DeadLetterConfig.Arn            #'SQS_QUEUE_ARN'. Same as EventBridge Rules (see its doc)
@@ -2827,15 +2871,18 @@ MESSAGE_ATTRS.SCHEDULED_TIME      #'DATE'
                                   │   DLQ AUTH   │
                                   └──────────────┘
 
-PACTION sqs:SendMessage           #Like EventBridge Rules (see its doc) but with:
-PACTION kms:*                     #  - Principal.Service 'scheduler.amazonaws.com'
-                                  #  - COND_KEY aws:SourceArn SCHEDULE_ARN
+PACTION sqs:SendMessage           #Must be allowed on SCHEDULE_TARGET.RoleArn for QUEUE
+
+PACTION kms:*                     #Also when SQS-KMS (see SQS doc)
 
                                   ┌─────────────┐
                                   │   DLQ IAC   │
                                   └─────────────┘
 
-AWS::Scheduler::Schedule          #Includes RESPROPs: Target: RetryPolicy, DeadLetterConfig
+AWS::Scheduler::Schedule          #Includes RESPROPs: Target: DeadLetterConfig
+
+CSCHEDULE_TARGET_OPTS             #ICQUEUE. SCHEDULE_TARGET.DeadLetterConfig.Arn
+ .deadLetterQueue                 #Automatically allows permissions (except kms:*) as described above
 
                                   ┌─────────────────┐
                                   │   DLQ METRICS   │
@@ -2907,6 +2954,9 @@ PACTION kms:Decrypt               #If SCHEDULE.KmsKeyArn set, must be allowed to
                                   └────────────────────┘
 
 AWS::Scheduler::Schedule          #Includes RESPROPs: KmsKeyArn
+
+CSCHEDULE[_OPTS].key              #ICKEY
+                                  #Automatically allows PACTION kms:Decrypt to SCHEDULE_TARGET.RoleArn
 
                                   ┌───────────┐
                                   │   BASIC   │
