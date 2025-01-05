@@ -1,0 +1,645 @@
+
+                                  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                                  ┃   EVENTBRIDGE_SCHEDULER   ┃
+                                  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+VERSION ==>                       #2024-12-20
+
+SUMMARY ===>                      #Group: default, encryption
+                                  #Schedule: once|rate|cron, start|end, flexible window, timezone, auto-delete, basic
+                                  #Target: type (AWS services, universal), parameters, cross-BUS, role
+                                  #Errors: retry, DLQ
+
+                                  ┌─────────┐
+                                  │   API   │
+                                  └─────────┘
+
+SERVICE_DOMAIN                    #'scheduler.REGION.amazonaws.com'
+
+FORMAT ==>                        #REST API
+                                  #Request:
+                                  #  - POST|PUT: path parameters + JSON
+                                  #  - GET|DELETE: path parameters + query parameters (camelCase'd)
+                                  #Response: JSON
+
+PAGINATION ==>                    #Uses REQ.MaxResults (def|max: 100) + REQ|RES.NextToken
+                                  #No pagination: ListTagsForResource()
+
+THROTTLING ==>                    #1e3/s (REGION-specific) (soft): TARGET calls
+                                  #1e3/s (REGION-specific) (soft): Create|Update|Get|DeleteSchedule()
+                                  #50/s (soft): ListSchedules()
+                                  #10/s (soft): Create|List|Get|DeleteScheduleGroup(), ListTagsForResource()
+                                  #1/s (soft): [Un]tagResource()
+
+PRICING ==>                       #1$ per 1e6 SCHEDULE invocations
+                                  #  - free: 1.4e7/month
+
+                                  ┌─────────────────┐
+                                  │   API METRICS   │
+                                  └─────────────────┘
+
+AWS/Usage/CallCount               #NUM of API calls
+                                  #Uses DVARs: Service 'Scheduler', Type 'API', Resource 'ACTION'
+
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
+AmazonEventBridgeScheduler
+ FullAccess                       #AWS managed POLICY. Grants all 'scheduler:*' PACTIONs
+AmazonEventBridgeScheduler
+ ReadOnlyAccess                   #AWS managed POLICY. Grants all readonly 'scheduler:*' PACTIONs
+
+                                  ┌───────────┐
+                                  │   GROUP   │
+                                  └───────────┘
+
+GROUP                             #Group of SCHEDULEs
+                                  #Deleting also deletes the SCHEDULEs
+                                  #Max 500 (soft) per REGION|ACCOUNT
+GROUP.Arn                         #'GROUP_ARN'. 'arn:aws:scheduler:REGION:ACCOUNT_ID:schedule-group/GROUP'
+GROUP.Name                        #'GROUP'
+                                  #Must be [:alnum:]-_. and max 64 chars
+GROUP.CreationDate                #DATE_NUM
+GROUP.LastModificationDate        #DATE_NUM
+
+GROUP.State                       #'ACTIVE' or 'DELETING'
+
+GROUP.ClientToken                 #STR. Idempotency token (see aws_network doc)
+                                  #Must be [:alnum:]-_ and max 64 chars
+
+                                  ┌────────────────┐
+                                  │   GROUP AUTH   │
+                                  └────────────────┘
+
+PACTION scheduler:DeleteSchedule  #Required to delete GROUP, if it has any SCHEDULE
+
+                                  ┌───────────────┐
+                                  │   GROUP API   │
+                                  └───────────────┘
+
+POST /schedule-groups/GROUP       #Req: GROUP
+CreateScheduleGroup()             #  - only ClientToken
+                                  #  - only one with Tags
+                                  #Res: GROUP
+                                  #  - only Arn -> ScheduleGroupArn
+GET /schedule-groups              #Req: GROUP
+ListScheduleGroups()              #  - only Name -> NamePrefix
+                                  #Res: ScheduleGroups GROUP_ARR
+                                  #  - no ClientToken
+GET /schedule-groups/GROUP        #Req: GROUP
+GetScheduleGroup()                #  - only Name
+                                  #Res: GROUP
+                                  #  - no ClientToken
+DELETE /schedule-groups/GROUP     #Req: GROUP
+DeleteScheduleGroup()             #  - only Name, ClientToken
+                                  #Res: empty
+
+                                  ┌───────────────┐
+                                  │   GROUP IAC   │
+                                  └───────────────┘
+
+AWS::Scheduler::ScheduleGroup     #RESPROPs: Name
+                                  #RESATTRs: Arn, CreationDate, LastModificationDate, State
+
+new Group(...CARGS, CGROUP_OPTS)  #
+Group.fromGroupArn
+ (...CARGS, 'GROUP_ARN')->ICGROUP #
+Group.fromGroupName
+ (...CARGS, 'GROUP')->ICGROUP     #
+
+ICGROUP[_OPTS].groupName          #'GROUP' (def: SID, maxLength 64, separator '-')
+ICGROUP.groupArn                  #'GROUP_ARN'_CSATTR
+
+CGROUP_OPTS.removalPolicy         #REMOVAL_POLICY (def: RETAIN)
+
+CGROUP.grant
+ (YGRANTABLE, 'PACTION',...)
+ ->CGRANT                         #
+
+                                  ┌───────────────────┐
+                                  │   GROUP METRICS   │
+                                  └───────────────────┘
+
+DVAR ScheduleGroup                #'GROUP'. With all AWS/Scheduler/* METRICs
+
+                                  ┌───────────────────────┐
+                                  │   GROUP METRICS IAC   │
+                                  └───────────────────────┘
+
+ICGROUP.metric
+ ('METRIC'[, CMETRIC_OPTS])
+ ->CMETRIC                        #Uses statistic 'Sum', DVAR ScheduleGroup
+
+Schedule.metricAll
+ ('METRIC'[, CMETRIC_OPTS])
+ ->CMETRIC                        #Same but for any GROUP: no DVAR ScheduleGroup nor ACCOUNT|REGION
+
+Schedule.metricAll*(...)          #Same as ICGROUP.metric.*(...) but for any GROUP
+
+                                  ┌─────────────┐
+                                  │   DEFAULT   │
+                                  └─────────────┘
+
+DEFAULT GROUP ==>                 #GROUP with name 'default'
+                                  #Already created, cannot be deleted
+
+                                  ┌─────────────────┐
+                                  │   DEFAULT IAC   │
+                                  └─────────────────┘
+
+DEFAULT GROUP ==>                 #No need to declare if keep default RESPROPs
+                                  #Else must:
+                                  #  - import with CHANGESET.ResourcesToImport
+                                  #  - RESOURCE.DeletionPolicy 'Retain'
+                                  #  - RESPROP Name 'default'
+
+Group.fromDefaultGroup(...CARGS)
+ ->ICGROUP                        #
+
+                                  ┌──────────────┐
+                                  │   SCHEDULE   │
+                                  └──────────────┘
+
+SCHEDULE                          #Calls a SCHEDULE_TARGET at specific times
+                                  #Max 1e7 (soft) per REGION|ACCOUNT
+SCHEDULE.Arn                      #'SCHEDULE_ARN'. 'arn:aws:scheduler:REGION:ACCOUNT_ID:schedule/GROUP/SCHEDULE'
+SCHEDULE.Name                     #'SCHEDULE'
+                                  #Must be [:alnum:]-_. and max 64 chars
+SCHEDULE.Description              #STR. Max 512 chars
+SCHEDULE.CreationDate             #DATE_NUM
+SCHEDULE.LastModificationDate     #DATE_NUM
+
+SCHEDULE.State                    #'ENABLED' (def) or 'DISABLED'
+
+SCHEDULE.ClientToken              #Like GROUP.ClientToken
+
+SCHEDULE.GroupName                #'GROUP' (def: 'default')
+
+                                  ┌──────────────────┐
+                                  │   SCHEDULE API   │
+                                  └──────────────────┘
+
+POST /schedules/SCHEDULE          #Req: SCHEDULE
+CreateSchedule()                  #  - no Arn, CreationDate, LastModificationDate
+                                  #Res: SCHEDULE
+                                  #  - only Arn -> ScheduleArn
+PUT /schedules/SCHEDULE           #Req: SCHEDULE
+UpdateSchedule()                  #  - no Arn, CreationDate, LastModificationDate
+                                  #Res: SCHEDULE
+                                  #  - only Arn -> ScheduleArn
+GET /schedules                    #Req: SCHEDULE
+ListSchedules()                   #  - only Name -> NamePrefix
+                                  #  - only GroupName, State
+                                  #Res: Schedules SCHEDULE_ARR
+                                  #  - no ActionAfterCompletion, Description, StartDate|EndDate,
+                                  #    FlexibleTimeWindow, KmsKeyArn, ScheduleExpression*
+                                  #  - no ClientToken
+                                  #  - Target: only Arn
+GET /schedules/SCHEDULE           #Req: SCHEDULE
+GetSchedule()                     #  - only Name, GroupName
+                                  #Res: SCHEDULE
+                                  #  - no ClientToken
+DELETE /schedules/SCHEDULE        #Req: SCHEDULE
+DeleteSchedule()                  #  - only Name, GroupName
+                                  #  - only ClientToken
+                                  #Res: empty
+
+                                  ┌──────────────────┐
+                                  │   SCHEDULE IAC   │
+                                  └──────────────────┘
+
+AWS::Scheduler::Schedule          #RESPROPs: Name, Description, State, GroupName
+                                  #RESATTRs: Arn
+
+new Schedule
+ (...CARGS, CSCHEDULE_OPTS)       #
+
+CSCHEDULE[_OPTS].scheduleName     #'SCHEDULE'[_TK]
+CSCHEDULE.scheduleArn             #'SCHEDULE_ARN'
+
+CSCHEDULE_OPTS.description        #SCHEDULE.*
+CSCHEDULE_OPTS.enabled            #BOOL (def: true). SCHEDULE.State
+
+CSCHEDULE[_OPTS].group            #ICGROUP (def: default)
+
+CGROUP.grantReadSchedules
+ (YGRANTABLE)->CGRANT             #Allows PACTION scheduler:List|GetSchedule on any SCHEDULE
+CGROUP.grantWriteSchedules
+ (YGRANTABLE)->CGRANT             #Allows PACTION scheduler:Create|UpdateSchedule on any SCHEDULE
+CGROUP.grantDeleteSchedules
+ (YGRANTABLE)->CGRANT             #Allows PACTION scheduler:DeleteSchedule on any SCHEDULE
+
+                                  ┌───────────────────────┐
+                                  │   SCHEDULE COMPOSER   │
+                                  └───────────────────────┘
+
+SCHEDULE ENHANCEMENT COMPONENT ==>#Only includes SCHEDULE
+
+                                  ┌─────────────────────────────────┐
+                                  │   SCHEDULE STEP FUNCTIONS IAC   │
+                                  └─────────────────────────────────┘
+
+new EventBridgeSchedulerCreate    #CSTATE_TASK for scheduler:createSchedule GENERIC_SERVICE_TASK
+ ScheduleTask(...CARGS, OPTS)     #Automatically allows PACTION:
+ ->CSCHEDULE_TASK                 #  - scheduler:createSchedule on SCHEDULE
+                                  #  - iam:PassRole on SCHEDULE_TARGET.RoleArn
+                                  #     - no COND_KEY aws:SourceArn|SourceAccount
+                                  #  - kms:* if needed
+                                  #Cannot set SCHEDULE_TARGET.*Parameters
+
+OPTS.*                            #CSTATE_TASK_OPTS.*
+
+OPTS.scheduleName
+OPTS.description
+OPTS.clientToken
+OPTS.groupName
+OPTS.timezone
+OPTS.actionAfterCompletion        #SCHEDULE.*
+OPTS.enabled                      #BOOL (def: true). SCHEDULE.State
+OPTS.startDate|endDate            #DATE. SCHEDULE.*
+OPTS.flexibleTimeWindow           #undefined (def) or DURATION. SCHEDULE.*
+OPTS.kmsKey                       #ICKEY. SCHEDULE.*
+
+OPTS.schedule                     #SCHEDULE.*. Can be:
+                                  #  - Schedule.oneTime(DATE)
+                                  #  - Schedule.rate(DURATION)
+                                  #  - Schedule.cron(OPTS), with OPTS.minute|hour|day|month|weekDay|year (def: '*' or '?')
+
+OPTS.target                       #Must be new EventBridgeSchedulerTarget(OOPTS)
+OOPTS.arn|input                   #SCHEDULE_TARGET.*
+OOPTS.role                        #ICROLE. SCHEDULE_TARGET.*
+OOPTS.retryPolicy
+ .maximumRetryAttempts            #SCHEDULE_TARGET.*
+OOPTS.retryPolicy.maximumEventAge #DURATION. SCHEDULE_TARGET.*
+OOPTS.deadLetterQueue             #ICQUEUE. SCHEDULE_TARGET.*
+
+                                  ┌────────────────┐
+                                  │   EXPRESSION   │
+                                  └────────────────┘
+
+SCHEDULE.ScheduleExpression       #When to run. Can be:
+                                  #  - 'at(YYYY-MM-DDTHH:MM:SS)': once
+                                  #  - 'rate(NUM minute[s]|hour[s]|day[s])': regular intervals
+                                  #  - 'cron(...)'
+
+CRON FORMAT ==>                   #See crontab format doc for ... syntax
+                                  #Uses 1-7 for Sunday to Saturday
+                                  #Day of month field:
+                                  #  - ?: like *
+                                  #     - if day of month|week field is *, the other must be ?
+                                  #  - L: last
+                                  #  - W: weekday
+                                  #  - 3W: once per month, on the weekday closest to third day of month
+                                  #Day of week field:
+                                  #  - ?: same
+                                  #  - L: same
+                                  #  - NUM#NUM2: NUM2th of the month
+                                  #     - NUM if day of week, with 1 for Sunday
+                                  #     - cannot use ,
+                                  #Daylight savings time, when moving:
+                                  #  - forwards: skips scheduled time
+                                  #  - backwards: does not repeat scheduled time
+
+SCHEDULE
+ .ScheduleExpressionTimezone      #'TZ' (def: UTC)
+
+SCHEDULE.StartDate|EndDate        #DATE_NUM (def: none). Do not call SCHEDULE_TARGET before|after DATE
+                                  #Not with SCHEDULE.ScheduleExpression 'at(...)'
+
+SCHEDULE.FlexibleTimeWindow       #SCHEDULE_FLEX
+                                  #Allows SCHEDULE to run between 0-NUM mins after scheduled time
+                                  #Goals:
+                                  #  - reliability: if there is a short outage, wait for it to resolve instead of failing
+                                  #  - availability: spread load, to avoid TARGET being called by many SCHEDULEs on the same minute
+                                  #Required (including to keep disabled)
+SCHEDULE_FLEX.Mode                #Whether enabled ('OFF') or not ('FLEXIBLE')
+SCHEDULE_FLEX
+ .MaximumWindowInMinutes          #NUM (in mins, max 1d)
+
+SCHEDULE.ActionAfterCompletion    #Can be:
+                                  #  - 'NONE' (def)
+                                  #  - 'DELETE' (recommended): deletes SCHEDULE after SCHEDULE_TARGET:
+                                  #      - 'at(...)': first|only call
+                                  #      - 'rate|cron(...)': last call, using SCHEDULE.EndDate
+
+                                  ┌────────────────────┐
+                                  │   EXPRESSION IAC   │
+                                  └────────────────────┘
+
+AWS::Scheduler::Schedule          #RESPROPs: ScheduleExpression, ScheduleExpressionTimezone, StartDate, EndDate, FlexibleTimeWindow
+
+CSCHEDULE_OPTS.schedule           #SCHEDULE.ScheduleExpression[Timezone]. Can be:
+                                  #  - ScheduleExpression.expression(STR[, TIMEZONE])
+                                  #  - ScheduleExpression.at(DATE[, TIMEZONE])
+                                  #  - ScheduleExpression.rate(DURATION)
+                                  #  - ScheduleExpression.cron(OPTS) with OPTS: timezone TIMEZONE,
+                                  #    minute|hour|day|month|weekDay|year (def: '*' or '?')
+
+CSCHEDULE_OPTS.start|end          #DURATION. SCHEDULE.StartDate|EndDate
+
+CSCHEDULE_OPTS.timeWindow         #SCHEDULE.flexibleTimeWindow. Can be:
+                                  #  - TimeWindow.off() (def)
+                                  #  - TimeWindow.flexible(DURATION)
+
+                                  ┌────────────┐
+                                  │   TARGET   │
+                                  └────────────┘
+
+SCHEDULE.Target                   #SCHEDULE_TARGET. RESOURCE being called
+SCHEDULE_TARGET.Arn               #'ARN'. SCHEDULE_TARGET_TYPE-specific.
+                                  #Each SERVICE documented it in its respective docs
+                                  #Run at least once: rarely can run twice (i.e. should be idempotent)
+SCHEDULE_TARGET.*Parameters       #OBJ. SCHEDULE_TARGET_TYPE-specific options
+                                  #Some SCHEDULE_TARGET_TYPEs do not have any
+                                  #Each SERVICE documented it in its respective docs
+
+SCHEDULE_TARGET.Input             #STR (def: empty). Input used when calling SCHEDULE_TARGET's RESOURCE
+aws.scheduler.*                   #Can be used inside SCHEDULE_TARGET.Input, as <aws.scheduler.*>
+aws.scheduler.schedule-arn        #'SCHEDULE_ARN'
+aws.scheduler.scheduled-time      #'DATE'
+aws.scheduler.execution-id        #'SCHEDULE_EXEC_ID', unique per execution
+aws.scheduler.attempt-number      #NUM + 1 of retries
+
+                                  ┌─────────────────┐
+                                  │   TARGET AUTH   │
+                                  └─────────────────┘
+
+SCHEDULE_TARGET.RoleArn           #'ROLE_ARN' used to call SCHEDULE_TARGET's RESOURCE
+                                  #Must be assumable by Principal.Service 'scheduler.amazonaws.com'
+                                  #  - COND_KEY aws:SourceArn SCHEDULE_ARN, aws:SourceAccount ACCOUNT_ID
+
+PACTION iam:PassRole              #Required on current PRINCIPAL
+                                  #COND_KEY iam:PassedToService 'scheduler.amazonaws.com'
+
+AmazonEventBridgeScheduler
+ FullAccess
+AmazonEventBridgeFullAccess       #Also allow PACTION iam:PassRole, as described above
+
+                                  ┌────────────────┐
+                                  │   TARGET IAC   │
+                                  └────────────────┘
+
+AWS::Scheduler::Schedule          #Includes RESPROPs: Target: Arn, *Parameters, Input, RoleArn
+
+CSCHEDULE_OPTS.target             #CSCHEDULE_TARGET. SCHEDULE_TARGET.Arn|*Parameters|Input|RoleArn
+new CSCHEDULE_TARGET
+ (..., CSTARGET_OPTS)             #Available CSCHEDULE_TARGETs documented in each service
+
+CSTARGET_OPTS.role                #ICROLE. SCHEDULE_TARGET.RoleArn
+                                  #Def: new singleton ROLE, as described above
+
+CSTARGET_OPTS.input               #CSCHEDULE_TARGET_INPUT. SCHEDULE_TARGET.Input
+ScheduleTargetInput.fromText(STR)
+ ->CSCHEDULE_TARGET_INPUT         #
+ScheduleTargetInput.fromObject
+ (OBJ)->CSCHEDULE_TARGET_INPUT    #JSON serialized to STR
+
+ContextAttribute.fromName('NAME')
+ContextAttribute.scheduleArn
+ |scheduledTime|executionId       #'<aws.schedule.NAME>'_TK
+ |attemptNumber                   #To use inside ScheduleTargetInput.from*(...)
+
+                                  ┌────────────────────┐
+                                  │   TARGET METRICS   │
+                                  └────────────────────┘
+
+AWS/Scheduler/
+ InvocationAttemptCount           #NUM of TARGET calls, including retries
+
+AWS/Scheduler/TargetErrorCount    #NUM of TARGET calls that failed, including retries
+AWS/Scheduler/
+ InvocationDroppedCount           #NUM of TARGET calls that failed, after retries
+
+AWS/Scheduler/
+ TargetErrorThrottledCount        #NUM of TARGET calls throttled by TARGET
+AWS/Scheduler/
+ InvocationThrottleCount          #NUM of TARGET calls throttled by EventBridge Scheduler
+
+                                  ┌────────────────────────┐
+                                  │   TARGET METRICS IAC   │
+                                  └────────────────────────┘
+
+ICGROUP.metricAttempts
+ ([METRIC_OPTS])->CMETRIC         #
+ICGROUP.metricTargetErrors
+ ([METRIC_OPTS])->CMETRIC         #
+ICGROUP.metricDropped
+ ([METRIC_OPTS])->CMETRIC         #
+ICGROUP.metricTargetThrottled
+ ([METRIC_OPTS])->CMETRIC         #
+ICGROUP.metricThrottled
+ ([METRIC_OPTS])->CMETRIC         #
+
+                                  ┌──────────────────────────────┐
+                                  │   TARGET EVENTBRIDGE EVENT   │
+                                  └──────────────────────────────┘
+
+EVENT_TYPE 'Scheduled Event'      #EventBridge EVENT emitted on scheduled event
+SOURCE                            #'aws.events'
+DETAIL                            #SCHEDULE_TARGET.Input
+
+                                  ┌───────────┐
+                                  │   RETRY   │
+                                  └───────────┘
+
+SCHEDULE_TARGET.RetryPolicy       #RETRY_POLICY. Same as EventBridge Rules (see its doc)
+                                  #Truncates SCHEDULE_TARGET.Input if > 256KB
+
+                                  ┌───────────────┐
+                                  │   RETRY IAC   │
+                                  └───────────────┘
+
+AWS::Scheduler::Schedule          #Includes RESPROPs: Target: RetryPolicy
+
+CSCHEDULE_OPTS.maxEventAge        #DURATION. RETRY_POLICY.MaximumEventAgeInSeconds
+CSCHEDULE_OPTS.retryAttempts      #RETRY_POLICY.MaximumRetryAttempts
+
+                                  ┌─────────┐
+                                  │   DLQ   │
+                                  └─────────┘
+
+SCHEDULE_TARGET
+ .DeadLetterConfig.Arn            #'SQS_QUEUE_ARN'. Same as EventBridge Rules (see its doc)
+
+MESSAGE_ATTRS.*                   #Like EventBridge Rules (see its doc) except no RULE_ARN
+                                  #Also has following additional fields
+MESSAGE_ATTRS.SCHEDULE_ARN        #'SCHEDULE_ARN'
+MESSAGE_ATTRS.EXECUTION_ID        #'SCHEDULE_EXEC_ID'
+MESSAGE_ATTRS.SCHEDULED_TIME      #'DATE'
+
+                                  ┌──────────────┐
+                                  │   DLQ AUTH   │
+                                  └──────────────┘
+
+PACTION sqs:SendMessage           #Must be allowed on SCHEDULE_TARGET.RoleArn for QUEUE
+
+PACTION kms:*                     #Also when SQS-KMS (see SQS doc)
+
+                                  ┌─────────────┐
+                                  │   DLQ IAC   │
+                                  └─────────────┘
+
+AWS::Scheduler::Schedule          #Includes RESPROPs: Target: DeadLetterConfig
+
+CSTARGET_OPTS.deadLetterQueue     #ICQUEUE. SCHEDULE_TARGET.DeadLetterConfig.Arn
+                                  #Automatically allows permissions (except kms:*) as described above
+
+                                  ┌─────────────────┐
+                                  │   DLQ METRICS   │
+                                  └─────────────────┘
+
+AWS/Scheduler/
+ InvocationsSentToDeadLetterCount #NUM of EVENTs sent to DLQ
+
+AWS/Scheduler/InvocationsFailed
+ ToBeSentToDeadLetterCount        #NUM of EVENTs failed to be sent to DLQ
+AWS/Scheduler/InvocationsFailed
+ ToBeSentToDeadLetterCount_CODE   #Same but only for specific ERROR 'CODE', e.g. 'AWS.SimpleQueueService.NonExistentQueue'
+
+AWS/Scheduler/
+ InvocationsSentToDeadLetterCount
+ _Truncated_MessageSizeExceeded   #NUM of EVENTs truncated due to SQS max size
+
+                                  ┌─────────────────────┐
+                                  │   DLQ METRICS IAC   │
+                                  └─────────────────────┘
+
+ICGROUP.metricSentToDLQ
+ ([METRIC_OPTS])->CMETRIC         #
+ICGROUP.metricFailedToBeSentToDLQ
+ (['CODE'[, METRIC_OPTS]])
+ ->CMETRIC                        #
+ICGROUP.metricSentToDLQTruncated
+ ([METRIC_OPTS])->CMETRIC         #
+
+                                  ┌───────────────┐
+                                  │   UNIVERSAL   │
+                                  └───────────────┘
+
+SCHEDULE_TARGET.Arn               #'arn:aws:scheduler:::aws-sdk:SERVICE:ACTION'
+                                  #Is "universal", unlike other SCHEDULE_TARGETs ("templated"):
+                                  #  - can call any SERVICE ACTION
+                                  #  - but in a more generic way
+
+ACTION                            #camelCase
+                                  #Only write ACTION
+
+INPUT ==>                         #PARAMS
+                                  #Same names as with API
+                                  #Request body, query params, URI params
+
+                                  ┌─────────┐
+                                  │   BUS   │
+                                  └─────────┘
+
+SCHEDULE_TARGET.Arn               #EventBridge 'BUS_ARN'. Calls PutEvents()
+                                  #Input is 'GEVENT_JSON'
+
+SCHEDULE_TARGET
+ .EventBridgeParameters
+ .Source|DetailType               #EVENT.*
+
+                                  ┌──────────────┐
+                                  │   BUS AUTH   │
+                                  └──────────────┘
+
+PACTION events:PutEvents          #Must be allowed for SCHEDULE_TARGET.RoleArn, on target BUS2
+
+                                  ┌─────────────┐
+                                  │   BUS IAC   │
+                                  └─────────────┘
+
+AWS::Scheduler::Schedule          #Includes RESPROPs: Target: EventBridgeParameters
+
+new EventBridgePutEvents          #CSCHEDULE_TARGET
+ (INIT_OPTS[, CBUS_STARGET_OPTS]) #Adds permissions as described above
+CBUS_STARGET_OPTS.*               #CSTARGET_OPTS.* except no: input
+INIT_OPTS.eventBus                #ICBUS
+INIT_OPTS.detail                  #'GEVENTJSON'
+INIT_OPTS.source|detailType       #SCHEDULE_TARGET.EventBridgeParameters.*
+
+                                  ┌────────────────┐
+                                  │   ENCRYPTION   │
+                                  └────────────────┘
+
+SCHEDULE.KmsKeyArn                #'KMS_KEY_ARN' (def: AWS managed). Encrypt EVENTs at rest
+                                  #If using default KEY, also encrypts SCHEDULE.*
+
+                                  ┌─────────────────────┐
+                                  │   ENCRYPTION AUTH   │
+                                  └─────────────────────┘
+
+PACTION kms:Decrypt               #If SCHEDULE.KmsKeyArn set, must be allowed to current PRINCIPAL
+ |GenerateDataKey|DescribeKey     #COND_KEY kms:EncryptionContext:aws:events:schedule:arn SCHEDULE_ARN
+                                  #COND_KEY kms:ViaService 'scheduler.amazonaws.com'
+
+PACTION kms:Decrypt               #If SCHEDULE.KmsKeyArn set, must be allowed to SCHEDULE_TARGET.RoleArn
+
+                                  ┌────────────────────┐
+                                  │   ENCRYPTION IAC   │
+                                  └────────────────────┘
+
+AWS::Scheduler::Schedule          #Includes RESPROPs: KmsKeyArn
+
+CSCHEDULE[_OPTS].key              #ICKEY
+                                  #Automatically allows PACTION kms:Decrypt to SCHEDULE_TARGET.RoleArn
+
+                                  ┌───────────┐
+                                  │   BASIC   │
+                                  └───────────┘
+
+RULE.ScheduleExpression           #STR. Part of EventBridge Rules (see its doc), not Scheduler
+                                  #Has fewer features
+                                  #Similar pricing
+                                  #Syntax is like above except no 'at(...)'
+                                  #Calls TARGET at specific times, using TARGET.Input (def: empty)
+                                  #If set, RULE.EventPattern defaults to matching any GEVENT
+                                  #  - but can also set both
+                                  #Must be on default BUS
+                                  #Max 256 chars
+
+                                  ┌───────────────┐
+                                  │   BASIC IAC   │
+                                  └───────────────┘
+
+AWS::Events::Rule                 #Includes RESPROPs: ScheduleExpression
+
+CRULE_OPTS.scheduleExpression     #RULE.*. Can be:
+                                  #  - Schedule.expression(STR)
+                                  #  - Schedule.rate(DURATION)
+                                  #  - Schedule.cron(OPTS) with OPTS.minute|hour|day|month|weekDay|year (def: '*' or '?')
+
+                                  ┌────────────────┐
+                                  │   BASIC LINT   │
+                                  └────────────────┘
+
+cfn-lint E3027                    #Valid EventBridge Rule.ScheduleExpression
+
+                                  ┌──────────┐
+                                  │   TAGS   │
+                                  └──────────┘
+
+RESOURCE_TAGS.ResourceARN         #'GROUP_ARN'
+RESOURCE_TAGS.Tags
+GROUP.Tags                        #TAG_PAIRS
+
+                                  ┌──────────────┐
+                                  │   TAGS API   │
+                                  └──────────────┘
+
+POST /tags/GROUP_ARN              #Req: RESOURCE_TAGS
+TagResource()                     #Res: empty
+GET /tags/GROUP_ARN               #Req: RESOURCE_TAGS
+ListTagsForResource()             #  - only ResourceARN
+                                  #Res: RESOURCE_TAGS
+                                  #  - only Tags
+DELETE /tags/GROUP_ARN            #Req: RESOURCE_TAGS
+UntagResource()                   #  - Tags OBJ -> TagKeys 'TAG'_ARR
+                                  #Res: empty
+
+                                  ┌──────────────┐
+                                  │   TAGS IAC   │
+                                  └──────────────┘
+
+AWS::Scheduler::ScheduleGroup     #Includes RESPROPs: Tags
