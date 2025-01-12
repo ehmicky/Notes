@@ -32,9 +32,10 @@ AmazonS3TablesReadOnlyAccess      #Same but readonly
                                   └────────────┘
 
 TABLE_BUCKET                      #Group of NAMESPACEs
+                                  #Max 10 (soft) per REGION|ACCOUNT
 TABLE_BUCKET.arn                  #TABLE_BUCKET_ARN. 'arn:aws:s3tables:REGION:ACCOUNT_ID:bucket/TABLE_BUCKET'
 TABLE_BUCKET.name                 #'TABLE_BUCKET'
-                                  #Only [0-9a-z]_- and min 3 chars, max 63 chars
+                                  #Must [0-9a-z]- and min 3 chars, max 63 chars
 TABLE_BUCKET.createdAt            #'DATE'
 
 TABLE_BUCKET.ownerAccountId       #'ACCOUNT_ID'
@@ -77,7 +78,7 @@ CLOUDTRAIL ==>                    #*TableBucket() are logged with CloudTrail as 
 
 NAMESPACE                         #Group of TABLEs
 NAMESPACE.namespace               #'NAMESPACE'_ARR (single item)
-                                  #Only [0-9a-z]_ and max 255 chars
+                                  #Must [0-9a-z]_ and max 63 chars
 NAMESPACE.createdAt               #'DATE'
 
 NAMESPACE.tableBucketARN          #TABLE_BUCKET_ARN
@@ -120,11 +121,11 @@ DeleteNamespace()                 #Res: empty
                                   └───────────┘
 
 TABLE                             #Apache Iceberg table
-                                  #I.e. big flat tables, meant to be continuously incremented, then queried
+                                  #I.e. big flat tables
 
 TABLE.tableARN                    #'TABLE_ARN'. 'TABLE_BUCKET_ARN/table/TABLE'
 TABLE.name                        #'TABLE'
-                                  #[0-9a-z]_ and max 255 chars
+                                  #Must be [0-9a-z]_ and max 63 chars
 TABLE.createdAt                   #'DATE'
 TABLE.modifiedAt                  #'DATE'
 
@@ -146,6 +147,8 @@ TABLE.versionToken                #STR
                                   ┌────────────────┐
                                   │   TABLE AUTH   │
                                   └────────────────┘
+
+ANONYMOUS ACCESS ==>              #Unlike S3, not possible
 
 COND_KEY s3tables:tableName       #'TABLE'. With any PACTION which takes 'TABLE' as parameter
 
@@ -185,6 +188,17 @@ DeleteTable()                     #  - query: only versionToken
 
 CLOUDTRAIL ==>                    #*Table() are logged with CloudTrail as data EVENTs
 
+                                  ┌───────────┐
+                                  │   QUERY   │
+                                  └───────────┘
+
+SQL ==>                           #Read|write queried are done with SQL
+                                  #Done by using a compatible SQL client (like Spark) and connecting it to S3 Tables
+                                  #Not done in S3 directly
+
+software.amazon.s3tables.iceberg
+ .S3TablesCatalog                 #Parameter used by some SQL client to connect to S3 Tables
+
                                   ┌───────────────────────┐
                                   │   METADATA LOCATION   │
                                   └───────────────────────┘
@@ -210,15 +224,16 @@ GetTableMetadataLocation()        #Res: TABLE
                                   │   MAINTENANCE BUCKET   │
                                   └────────────────────────┘
 
+MAINT_BUCKET                      #Jobs automatically performed by AWS on TABLE_BUCKETs
 MAINT_BUCKET.tableBucketARN       #'TABLE_BUCKET_ARN'
 MAINT_BUCKET.type                 #Always 'icebergUnreferencedFileRemoval'
 
 MAINT_BUCKET.configuration.TYPE   #MAINT_BUCKET_CONF
-MAINT_BUCKET_CONF.status          #'enabled' or 'disabled'
+MAINT_BUCKET_CONF.status          #'enabled' (def) or 'disabled'
+MAINT_BUCKET_CONF.settings.TYPE   #NUM (def: 3). After NUM days of OBJECT not being referenced by any snapshot, mark it as non-current
+ .unreferencedDays                #Cannot list which OBJECTs are non-current or not, except by contacting AWS support
 MAINT_BUCKET_CONF.settings.TYPE
- .unreferencedDays                #NUM. After NUM days of OBJECT not being referenced by any snapshot, mark it as non-current
-MAINT_BUCKET_CONF.settings.TYPE
- .nonCurrentDays                  #NUM. After NUM days of OBJECT not being non-current, delete it
+ .nonCurrentDays                  #NUM (def: 10). After NUM days of OBJECT not being non-current, delete it
 
                                   ┌────────────────────────────┐
                                   │   MAINTENANCE BUCKET API   │
@@ -243,24 +258,25 @@ AWS::S3Tables::TableBucket        #Includes RESPROPs: UnreferencedFileRemoval: S
                                   │   MAINTENANCE TABLE   │
                                   └───────────────────────┘
 
+MAINT_TABLE                       #Jobs automatically performed by AWS on TABLEs
 MAINT_TABLE.tableBucketARN        #'TABLE_BUCKET_ARN'
 MAINT_TABLE.namespace             #'NAMESPACE'
 MAINT_TABLE.name                  #'NAME'
 MAINT_TABLE.type                  #Either 'icebergCompaction' or 'icebergSnapshotManagement'
 
 MAINT_TABLE.configuration.TYPE    #MAINT_TABLE_CONF
-MAINT_TABLE_CONF.status           #'enabled' or 'disabled'
+MAINT_TABLE_CONF.status           #'enabled' (def) or 'disabled'
 
-MAINT_TABLE_CONF.settings
- .icebergCompaction
- .targetFileSizeMB                #NUM (in MB). Target file size, for compaction
+MAINT_TABLE_CONF.settings         #NUM (in MB, def 512MB). Preferred OBJECT size, for compaction
+ .icebergCompaction               #Compaction compresses data by grouping small OBJECTs together
+ .targetFileSizeMB                #Only if using Apache Parquet
 
 MAINT_TABLE_CONF.settings
  .icebergSnapshotManagement       #MAINT_TABLE_SNAPSHOTS
 MAINT_TABLE_SNAPSHOTS
  .maxSnapshotAgeHours             #NUM. Delete snapshot after NUM hours
 MAINT_TABLE_SNAPSHOTS
- .minSnapshotsToKeep              #NUM. Do not delete snapshot if <= NUM of them
+ .minSnapshotsToKeep              #NUM (def: 1). Do not delete snapshot if <= NUM of them
 
                                   ┌───────────────────────────┐
                                   │   MAINTENANCE TABLE API   │
@@ -280,6 +296,7 @@ GetTableMaintenanceConfiguration()#Res: MAINT_TABLE
                                   │   MAINTENANCE JOB   │
                                   └─────────────────────┘
 
+MAINT_JOB                         #Status of MAINT_BUCKET|MAIN_TABLE's jobs
 MAINT_JOB.tableBucketARN          #'TABLE_BUCKET_ARN'
 MAINT_JOB.namespace               #'NAMESPACE'
 MAINT_JOB.name                    #'TABLE'
