@@ -549,7 +549,7 @@ GetObject()                       #  - READ_OBJECT
                                   #    Content-Disposition [S], Content-Length [S], x-amz-meta-* [S], x-amz-version-id [S], x-amz-delete-marker [S],
                                   #    x-amz-restore [S], x-amz-restore-request-date [S], x-amz-archive-status [S],
                                   #    x-amz-expiration [S], x-amz-missing-meta [S], x-amz-website-redirect-location [S],
-                                  #    x-amz-tagging-count [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S],
+                                  #    x-amz-tagging-count [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S], x-amz-checksum-type [S],
                                   #    x-amz-storage-class [S], x-amz-replication-status [S], x-amz-mp-parts-count [S]
                                   #    x-amz-object-lock* [S]
 HEAD /BUCKET/OBJECT
@@ -560,7 +560,7 @@ GetObjectAttributes()             #  - like GetObject()
                                   #  - x-amz-object-attributes [C]
                                   #  - same pagination as ListParts(), but as x-amz-max-parts [C], x-amz-part-number-marker [C]
                                   #Res: OBJECT
-                                  #  - only ETag, StorageClass, Size -> ObjectSize, ChecksumALGO -> Checksum.ChecksumALGO
+                                  #  - only ETag, StorageClass, Size -> ObjectSize, ChecksumALGO -> Checksum.ChecksumALGO, ChecksumType
                                   #  - only Last-Modified [S], x-amz-version-id [S], x-amz-delete-marker [S]
                                   #  - ObjectParts MUPLOAD: only Parts and pagination
 
@@ -779,7 +779,7 @@ PutObject()                       #  - RAW_OBJECT (including PARAMS.Body STREAM)
                                   #  - max 8KB request headers
                                   #Res:
                                   #  - ETag [S], x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
-                                  #    x-amz-checksum-ALGO [S], x-amz-object-size [S]
+                                  #    x-amz-checksum-ALGO [S], x-amz-checksum-type [S], x-amz-object-size [S]
 
                                   ┌─────────────────────────────────────┐
                                   │   SIMPLE UPLOAD EVENTBRIDGE EVENT   │
@@ -946,6 +946,9 @@ MPART.partNumber                  #NUM. 1-based index.
                                   #Max 1e4
 MPART.Size                        #NUM
 
+x-amz-mp-object-size [C]          #NUM. Total size
+                                  #Make request fail if size mismatch
+
 NEVENT s3:ObjectCreated:
  CompleteMultipartUpload          #On CompleteMultipartUpload() success
 
@@ -967,7 +970,7 @@ PACTION s3:AbortMultipartUpload   #Automatically granted to MUPLOAD.Initiator, e
 POST /BUCKET/OBJECT?uploads       #Req:
 CreateMultipartUpload()           #  - same headers as PutObject()
                                   #     - no If-[None-]Match [C]
-                                  #  - x-amz-checksum-algo-ALGO [C], x-amz-checksum-algorithm [C]
+                                  #  - x-amz-checksum-algo-ALGO [C], x-amz-checksum-algorithm [C], x-amz-checksum-type [C]
                                   #Res:
                                   #  - MUPLOAD
                                   #     - only Bucket, Key, UploadId
@@ -999,11 +1002,12 @@ CompleteMultipartUpload()         #  - only uploadId (as query variable)
                                   #  - only Parts
                                   #     - no LastModified, Size
                                   #  - If-[None-]Match [C]
-                                  #  - x-amz-server-side-encryption-customer-* [C], x-amz-checksum-ALGO [C]
+                                  #  - x-amz-server-side-encryption-customer-* [C], x-amz-checksum-ALGO [C], x-amz-checksum-type [C]
                                   #Res:
                                   #  - OBJECT
-                                  #     - only Bucket, Location, ETag, LastModified, ChecksumALGO
-                                  #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
+                                  #     - only Bucket, Location, ETag, LastModified, ChecksumALGO, ChecksumType
+                                  #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
+                                  #    x-amz-mp-object-size [C]
 DELETE /BUCKET/OBJECT             #Req: MUPLOAD
 AbortMultipartUpload()            #  - only uploadId
                                   #  - only one with x-amz-if-match-initiated-time [C]
@@ -1096,7 +1100,7 @@ CopyObject()                      #  - like PutObject()
                                   #  - query variables: OBJECT.versionId (source)
                                   #Res:
                                   #  - OBJECT
-                                  #     - only ETag, LastModified, ChecksumALGO
+                                  #     - only ETag, LastModified, ChecksumALGO, ChecksumType
                                   #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
                                   #    x-amz-copy-source* [S]
 PUT /BUCKET/OBJECT                #Req:
@@ -1378,7 +1382,7 @@ COND_KEY
                                   │   CHECKSUMS   │
                                   └───────────────┘
 
-ALGO                              #One of 'CRC32[C]', 'SHA1' or 'SHA256'
+ALGO                              #One of 'CRC32[C]', 'CRC64NVME', 'SHA1' or 'SHA256'
 OBJECT|MUPLOAD.ChecksumAlgorithm  #ALGO
 
 x-amz-checksum-ALGO [C]           #'BASE64_HASH'. Send checksum, for integrity: fail on checksum mismatch.
@@ -1387,16 +1391,6 @@ x-amz-checksum-ALGO [C]           #'BASE64_HASH'. Send checksum, for integrity: 
                                   #  - checksum of encrypted data instead
                                   #  - if SSE-C: must pass x-amz-server-side-encryption-customer-* [C] to
                                   #    ListParts(), CompleteMultipartUpload()
-                                  #If multipart, can use checksum of either:
-                                  #  - whole content ("full checksum")
-                                  #     - only with ALGO 'CRC*'
-                                  #  - each MPART with own checksum ("composite checksum"):
-                                  #     - MPARTs uploading must be serial
-                                  #     - OBJECT uses:
-                                  #        - checksum of concatenation of MPART checksums
-                                  #        - appended with -NUM (number of MPARTs)
-                                  #     - i.e. CopyObject|UploadPartCopy() can change checksum if source used multipart,
-                                  #       but not target, or vice-versa
 
 Content-MD5: MD5_HASH [C]         #Alternative to x-amz-checksum-ALGO [C]
                                   #Matches ETag [S]
@@ -1409,14 +1403,24 @@ Content-MD5: MD5_HASH [C]         #Alternative to x-amz-checksum-ALGO [C]
                                   #  - when not matching ETag [S], cannot retrieve checksum
                                   #  - no MPART checksum, i.e. integrity failures happen only at end of multipart upload
 
-ALGO 'CRC64NVME'                  #When no ALGO set, API automatically computes|sets a checksum using CRC64NVME
-                                  #Not with multipart uploads
-
 x-amz-checksum-algorithm: ALGO [C]#When copying OBJECTs, change the checksum ALGO
 
 x-amz-checksum-mode: ENABLED [C]  #Set x-amz-checksum-ALGO [S]
 x-amz-checksum-ALGO [S]
 OBJECT|MPART.ChecksumALGO         #'BASE64_HASH'. SDK|CLI validate response body against it
+
+x-amz-checksum-type [C|S]         #How multipart checksum is computed:
+OBJECT|MPART.ChecksumType         #  - 'FULL_OBJECT': whole content
+                                  #     - only with ALGO 'CRC*'
+                                  #  - 'COMPOSITE' (def): each MPART with own checksum
+                                  #     - MPARTs uploading must be serial
+                                  #     - OBJECT uses:
+                                  #        - checksum of concatenation of MPART checksums
+                                  #        - appended with -NUM (number of MPARTs)
+                                  #     - i.e. CopyObject|UploadPartCopy() can change checksum if source used multipart,
+                                  #       but not target, or vice-versa
+                                  #     - not with ALGO CRC64NVME
+                                  #For non-multipart, always 'FULL_OBJECT'
 
                                   ┌───────────────────┐
                                   │   CHECKSUMS SDK   │
@@ -1432,18 +1436,19 @@ ENVVAR                            #Automatically implements PARAMS.ChecksumAlgor
 COPTS.requestChecksumCalculation  #  - 'WHEN_REQUESTED': only when requested by user
 
 PARAMS.ChecksumAlgorithm          #'ALGO'. If set, computes default value for x-amz-checksum-ALGO [C] automatically
-                                  #Def: let API use CRC64NVME, except:
-                                  #  - if Express: CRC32
-                                  #  - PutObject(), UploadPart(), RestoreObject(), PutBucketAccelerateConfiguration(),
+                                  #Def: CRC32
+                                  #  - except PutObject(), UploadPart(), RestoreObject(), PutBucketAccelerateConfiguration(),
                                   #    PutBucketOwnershipControls(): no checksum
                                   #Only with SDK|CLI, not API
                                   #  - sometimes called dummy name x-amz-sdk-checksum-algorithm [C] in the online doc
 
-CONFIG
- .response_checksum_validation    #Validate x-amz-checksum-ALGO [S] automatically:
-ENVVAR                            #  - 'WHEN_SUPPORTED' (def): always
- AWS_RESPONSE_CHECKSUM_VALIDATION #  - 'WHEN_REQUESTED': only when requested by user
+CONFIG                            #Validate x-amz-checksum-ALGO [S] automatically:
+ .response_checksum_validation    #  - 'WHEN_SUPPORTED' (def): always
+ENVVAR                            #  - 'WHEN_REQUESTED': only when requested by user
+ AWS_RESPONSE_CHECKSUM_VALIDATION #Also sets x-amz-checksum-mode: ENABLED [C]
 COPTS.responseChecksumValidation  #Only with GetObject()
+
+ALGO 'CRC64NVME'                  #Must use signature v4a (see its doc)
 
                                   ┌───────────────────┐
                                   │   CHECKSUMS CLI   │
