@@ -66,18 +66,15 @@ DeleteTableBucket()               #  - path: tableBucketARN
 AWS::S3Tables::TableBucket        #RESPROPs: TableBucketName
                                   #RESATTRs: TableBucketARN
 
-                                  ┌────────────────────┐
-                                  │   BUCKET LOGGING   │
-                                  └────────────────────┘
-
-CLOUDTRAIL ==>                    #*TableBucket() are logged with CloudTrail as data EVENTs
-
                                   ┌───────────────┐
                                   │   NAMESPACE   │
                                   └───────────────┘
 
-NAMESPACE                         #Group of TABLEs
+NAMESPACE                         #SQL namespace, i.e. group of TABLEs
+                                  #Cannot be nested
+                                  #Max 100 per TABLE_BUCKET
 NAMESPACE.namespace               #'NAMESPACE'_ARR (single item)
+                                  #SQL namespace name
                                   #Must [0-9a-z]_ and max 63 chars
 NAMESPACE.createdAt               #'DATE'
 
@@ -120,17 +117,19 @@ DeleteNamespace()                 #Res: empty
                                   │   TABLE   │
                                   └───────────┘
 
-TABLE                             #Apache Iceberg table
+TABLE                             #SQL table stored in Apache Iceberg format
                                   #I.e. big flat tables
+                                  #Max 100 per TABLE_BUCKET
 
 TABLE.tableARN                    #'TABLE_ARN'. 'TABLE_BUCKET_ARN/table/TABLE'
-TABLE.name                        #'TABLE'
+TABLE.name                        #'TABLE'. Is also SQL table name
                                   #Must be [0-9a-z]_ and max 63 chars
 TABLE.createdAt                   #'DATE'
 TABLE.modifiedAt                  #'DATE'
 
 TABLE.tableBucketARN              #'TABLE_BUCKET_ARN'
 TABLE.namespace                   #'NAMESPACE'_ARR (single item)
+                                  #Can move TABLE from one NAMESPACE to another
 
 TABLE.ownerAccountId              #'ACCOUNT_ID' of TABLE
 TABLE.createdBy                   #'ACCOUNT_ID' that created TABLE
@@ -138,7 +137,11 @@ TABLE.modifiedBy                  #'ACCOUNT_ID' that last updated TABLE
 
 TABLE.format                      #Always 'ICEBERG'
 
-TABLE.type                        #Either 'customer' or 'aws'
+TABLE.type                        #Either:
+                                  #  - 'customer' ("self-managed")
+                                  #  - 'aws' ("S3-managed"):
+                                  #     - created by an AWS SERVICE
+                                  #     - can only be updated by that SERVICE
 TABLE.managedByService            #'SERVICE' that created the TABLE
                                   #Only if type 'aws'
 
@@ -148,12 +151,7 @@ TABLE.versionToken                #STR
                                   │   TABLE AUTH   │
                                   └────────────────┘
 
-ANONYMOUS ACCESS ==>              #Unlike S3, not possible
-
 COND_KEY s3tables:tableName       #'TABLE'. With any PACTION which takes 'TABLE' as parameter
-
-PACTION s3tables:GetTableData     #Allows using s3:GetObject|HeadObject|ListParts
-PACTION s3tables:PutTableData     #Allows using s3:PutObject and s3:CreateMultipartUpload|UploadPart|CompleteMultipartUpload|AbortMultipartUpload
 
                                   ┌───────────────┐
                                   │   TABLE API   │
@@ -182,33 +180,53 @@ DELETE /tables/TABLE_BUCKET_ARN   #Req: TABLE
 DeleteTable()                     #  - query: only versionToken
                                   #Res: empty
 
-                                  ┌───────────────────┐
-                                  │   TABLE LOGGING   │
-                                  └───────────────────┘
+                                  ┌──────────────┐
+                                  │   CRUD SQL   │
+                                  └──────────────┘
 
-CLOUDTRAIL ==>                    #*Table() are logged with CloudTrail as data EVENTs
-
-                                  ┌───────────┐
-                                  │   QUERY   │
-                                  └───────────┘
-
-SQL ==>                           #Read|write queried are done with SQL
-                                  #Done by using a compatible SQL client (like Spark) and connecting it to S3 Tables
+SQL ==>                           #Read|write data queries (DDL) are done with SQL
+                                  #DML queries (create|delete NAMESPACE|TABLE) can be done either with SQL or using API (*Namespace()|*Table())
+                                  #Done by using a compatible SQL client (see below) and connecting it to S3 Tables
                                   #Not done in S3 directly
 
-software.amazon.s3tables.iceberg
- .S3TablesCatalog                 #Parameter used by some SQL client to connect to S3 Tables
+AWS SERVICE ==>                   #Can use:
+                                  #  - Lake Formation
+                                  #  - combined with Glue
+                                  #  - to allow following SERVICEs to query S3 TABLEs:
+                                  #    Athena, Redshift, EMR, QuickSight, Data Firehose
+                                  #Not documented yet
 
-                                  ┌───────────────────────┐
-                                  │   METADATA LOCATION   │
-                                  └───────────────────────┘
+APACHE SPARK|FLINK ==>            #Can be used as SQL client
+                                  #Must use Java maven package "s3-tables-catalog-for-iceberg.jar"
+                                  #Not documented yet
+
+                                  ┌─────────────┐
+                                  │   CRUD S3   │
+                                  └─────────────┘
+
+TABLE.warehouseLocation           #'s3://RANDOM_ID--table-s3'. BUCKET containing all the data
+                                  #Can be used as a normal BUCKET
+                                  #Only for specific PACTIONs, specified below
+                                  #  - i.e. uses default settings for BUCKET
+                                  #No:
+                                  #  - TAG
+                                  #  - anonymous access
+                                  #  - pre-signed URL
+                                  #  - SSE-KMS
 
 TABLE.metadataLocation            #STR
-TABLE.warehouseLocation           #STR
 
-                                  ┌───────────────────────────┐
-                                  │   METADATA LOCATION API   │
-                                  └───────────────────────────┘
+                                  ┌──────────────────┐
+                                  │   CRUD S3 AUTH   │
+                                  └──────────────────┘
+
+PACTION s3tables:GetTableData     #Allows using s3:GetObject|HeadObject|ListParts on warehouseLocation
+PACTION s3tables:PutTableData     #Allows using s3:PutObject and s3:CreateMultipartUpload|UploadPart|CompleteMultipartUpload|AbortMultipartUpload
+                                  #on warehouseLocation
+
+                                  ┌─────────────────┐
+                                  │   CRUD S3 API   │
+                                  └─────────────────┘
 
 PUT /tables/TABLE_BUCKET_ARN      #Req: TABLE
 /NAMESPACE/TABLE/metadata-location#  - path: only tableBucketARN, namespace, name
@@ -219,6 +237,12 @@ GET /tables/TABLE_BUCKET_ARN      #Req: TABLE
 /NAMESPACE/TABLE/metadata-location#  - path: only tableBucketARN, namespace, name
 GetTableMetadataLocation()        #Res: TABLE
                                   #  - only versionToken, metadataLocation, warehouseLocation
+
+                                  ┌─────────────────────┐
+                                  │   CRUD S3 LOGGING   │
+                                  └─────────────────────┘
+
+S3 PACTIONS ==>                   #Logged with CloudTrail like in S3, including for data EVENTs
 
                                   ┌────────────────────────┐
                                   │   MAINTENANCE BUCKET   │
@@ -267,14 +291,20 @@ MAINT_TABLE.type                  #Either 'icebergCompaction' or 'icebergSnapsho
 MAINT_TABLE.configuration.TYPE    #MAINT_TABLE_CONF
 MAINT_TABLE_CONF.status           #'enabled' (def) or 'disabled'
 
-MAINT_TABLE_CONF.settings         #NUM (in MB, def 512MB). Preferred OBJECT size, for compaction
+MAINT_TABLE_CONF.settings         #NUM (in MB, def 512MB, min 64MB). Preferred OBJECT size, for compaction
  .icebergCompaction               #Compaction compresses data by grouping small OBJECTs together
  .targetFileSizeMB                #Only if using Apache Parquet
+                                  #Not with data type `Fixed`
+                                  #Not with brotli|lz4 compression
 
 MAINT_TABLE_CONF.settings
  .icebergSnapshotManagement       #MAINT_TABLE_SNAPSHOTS
-MAINT_TABLE_SNAPSHOTS
- .maxSnapshotAgeHours             #NUM. Delete snapshot after NUM hours
+MAINT_TABLE_SNAPSHOTS             #NUM (def: 5d). Delete snapshot after NUM hours
+ .maxSnapshotAgeHours             #Any OBJECT in it is marked as non-current
+                                  #  - i.e. deleted after MAINT_BUCKET_CONF.settings.TYPE.nonCurrentDays
+                                  #Not if using Iceberg table properties
+                                  #  - e.g. branch|tag-based retention
+                                  #  - set either with metadata.json or `ALTER TABLE SET TBLPROPERTIES`
 MAINT_TABLE_SNAPSHOTS
  .minSnapshotsToKeep              #NUM (def: 1). Do not delete snapshot if <= NUM of them
 
