@@ -5,6 +5,10 @@
 
 VERSION ==>                       #2025-01-14
 
+SUMMARY ==>                       #Table: bucket, namespace, service-managed, version, migrate, data|metadata, policy
+                                  #CRUD: SQL (Lake Formation, Spark), S3
+                                  #Maintenance: orphans, compaction, snapshot deletion
+
                                   ┌─────────┐
                                   │   API   │
                                   └─────────┘
@@ -19,6 +23,16 @@ REQ_ID                            #x-amz-request-id [S] + x-amz-id-2 [S]
 s3tables.amazonaws.com            #SERVICE_DOMAIN
 
 PAGINATION ==>                    #Uses REQ|RES.continuationToken + REQ.max* NUM (def|max: 1e3)
+
+PRICING ==>                       #1$/4e4 OBJECTs
+                                  #Storage space ($/GB) is like S3 except:
+                                  #  - 15% more expensive
+                                  #  - no free tier
+                                  #API requests: like S3
+                                  #  - SQL requests are counted too
+                                  #Compaction:
+                                  #  - 1$/2.5e5 new OBJECTs
+                                  #  - 1$/20GB for new OBJECTs
 
                                   ┌──────────┐
                                   │   AUTH   │
@@ -117,7 +131,7 @@ DeleteNamespace()                 #Res: empty
                                   │   TABLE   │
                                   └───────────┘
 
-TABLE                             #SQL table stored in Apache Iceberg format
+TABLE                             #SQL table stored as Apache Parquet (for data) and Apache Iceberg format (for metadata)
                                   #I.e. big flat tables
                                   #CRUD can be done either with SQL or S3 API
                                   #Max 100 per TABLE_BUCKET
@@ -140,13 +154,13 @@ TABLE.format                      #Always 'ICEBERG'
 
 TABLE.type                        #Either:
                                   #  - 'customer' ("self-managed")
-                                  #  - 'aws' ("S3-managed"):
+                                  #  - 'aws' ("service-managed"):
                                   #     - created by an AWS SERVICE
                                   #     - can only be updated by that SERVICE
 TABLE.managedByService            #'SERVICE' that created the TABLE
                                   #Only if type 'aws'
 
-TABLE.versionToken                #STR
+TABLE.versionToken                #'TABLE_VERSION'. Automatically updated on TABLE data change
 
                                   ┌────────────────┐
                                   │   TABLE AUTH   │
@@ -181,19 +195,29 @@ DELETE /tables/TABLE_BUCKET_ARN   #Req: TABLE
 DeleteTable()                     #  - query: only versionToken
                                   #Res: empty
 
+                                  ┌─────────────────┐
+                                  │   MIGRATE CLI   │
+                                  └─────────────────┘
+
+apache-iceberg-tables-migration   #Python CLI to migrate S3 OBJECT to a TABLE instead
+ -tool                            #Not documented yet
+
                                   ┌──────────────┐
                                   │   CRUD SQL   │
                                   └──────────────┘
 
-SQL ==>                           #Read|write data queries (DDL) are done with SQL
-                                  #DML queries (create|delete NAMESPACE|TABLE) can be done either with SQL or using API (*Namespace()|*Table())
-                                  #Done by using a compatible SQL client (see below) and connecting it to S3 Tables
-                                  #Not done in S3 directly
+CRUD ==>                          #Read|write data queries (DDL) can be done either with:
+                                  #  - SQL
+                                  #  - S3 API (see TABLE.warehouseLocation below)
+                                  #DML queries (create|delete NAMESPACE|TABLE) can be done either with:
+                                  #  - SQL
+                                  #  - S3 Tables API (*Namespace(), *Table())
+                                  #SQL is done in one of the following ways
 
-AWS SERVICE ==>                   #Can use:
+AWS SERVICE ==>                   #Uses:
                                   #  - Lake Formation
                                   #  - combined with Glue
-                                  #  - to allow following SERVICEs to query S3 TABLEs:
+                                  #  - to allow following SERVICEs to perform SQL on S3 TABLEs:
                                   #    Athena, Redshift, EMR, QuickSight, Data Firehose
                                   #Not documented yet
 
@@ -218,18 +242,21 @@ PACTION s3tables:DeleteTable      #Also required for DELETE, DROP
                                   │   CRUD S3   │
                                   └─────────────┘
 
-TABLE.warehouseLocation           #'s3://RANDOM_ID--table-s3'. BUCKET containing all the data
+TABLE.warehouseLocation           #'s3://BUCKET'. BUCKET containing all the data
+                                  #Named 'RANDOM_ID--table-s3'
                                   #Can be used as a normal BUCKET
                                   #Only for specific PACTIONs, specified below
                                   #  - i.e. uses default settings for BUCKET
-                                  #  - higher max transaction/sec than normal S3 BUCKET
+                                  #  - transaction/sec compared to normal S3 BUCKETs
+                                  #     - 3x faster
+                                  #     - 10x higher limit
                                   #No:
                                   #  - TAG
                                   #  - anonymous access
                                   #  - pre-signed URL
                                   #  - SSE-KMS
 
-TABLE.metadataLocation            #STR
+TABLE.metadataLocation            #'s3://BUCKET'. BUCKET containing all the metadata
 
                                   ┌──────────────────┐
                                   │   CRUD S3 AUTH   │
@@ -310,7 +337,7 @@ MAINT_TABLE_CONF.status           #'enabled' (def) or 'disabled'
 
 MAINT_TABLE_CONF.settings         #NUM (in MB, def 512MB, min 64MB). Preferred OBJECT size, for compaction
  .icebergCompaction               #Compaction compresses data by grouping small OBJECTs together
- .targetFileSizeMB                #Only if using Apache Parquet
+ .targetFileSizeMB                #Goal is to speed queries
                                   #Not with data type `Fixed`
                                   #Not with brotli|lz4 compression
 
