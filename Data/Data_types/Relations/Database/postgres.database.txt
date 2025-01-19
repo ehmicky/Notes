@@ -2974,6 +2974,10 @@ pg_class.reloftype                #REGTYPE of ROW_TYPE when `of ROW_TYPE` was us
 
 "ROW_ALIAS".tableoid              #REGCLASS of TABLE. System COL
 
+crosstab('SUBQUERY')->ROW_SET     #With SUBQUERY returning ROW2_SET: row_name 'ROW', category 'COL', value VAL
+                                  #I.e. each ROW2 is a specific ROW+COL's value in ROW_SET
+                                  #Trusted postgres extension 'tablefunc'
+
                                   ┌─────────────┐
                                   │   COLUMNS   │
                                   └─────────────┘
@@ -2997,12 +3001,6 @@ pg_attribute.atthasmissing        #BOOL. Whether COL is currently being added.
 pg_attribute.attmissingval        #ARR (of length 1). Default VAL of the COL being added, when atthasmissing is true. null otherwise
 
 pg_class.relnatts                 #INT2. Number of COLs, excluding system COLs
-
-crosstab('SUBQUERY')->ROW_SET     #With SUBQUERY returning ROW2_SET: row_name STR, category STR, value VAL
-                                  #Flips ROW|COLs:
-                                  #  - all ROWs with same row_name are grouped as a single ROW
-                                  #  - category is used as the column name
-                                  #Trusted postgres extension 'tablefunc'
 
                                   ┌────────────────┐
                                   │   CONSTRAINT   │
@@ -3033,7 +3031,7 @@ primary key("COL",...) ...
 foreign key("COL",...) references
  "TABLE"("COL2",...) ...          #COL_ARG. Multicolumn CONSTRAINTs
 
-constraint "CONSTRAINT" COL_ARG   #Assign "CONSTRAINT" name
+constraint "CONSTRAINT" COL_ARG   #Set "CONSTRAINT" name
                                   #Not with: like "TABLE|ROW_TYPE"
 alter table "TABLE"
  rename constraint "CONSTRAINT"
@@ -3083,7 +3081,7 @@ pg_index.indisvalid               #BOOL. Whether `not valid` was used and not `v
                                   │   DEFERRED CONSTRAINT   │
                                   └─────────────────────────┘
 
-set constraints CONSTRAINT,...    #Check CONSTRAINT|TFUNCs at the end of the current transaction only.
+set constraints CONSTRAINT,...    #Check CONSTRAINT|TFUNCs at the end of the transaction, instead of end of the statement
  deferred                         #Does not apply to check() and `not null`
                                   #Cannot be done if marked as `not deferrable` (see below)
                                   #  - default for unique and exclude() CONSTRAINTs
@@ -3162,11 +3160,11 @@ create table ...
 alter table "TABLE" add           #Add the CONSTRAINT using an existing INDEX
  [constraint "CONSTRAINT"]        #Def "CONSTRAINT" name: same as "INDEX"
  unique|primary key using "INDEX" #INDEX must:
+                                  #  - be `unique`
                                   #  - not use REXPR
                                   #  - not use `where` (partial INDEX)
                                   #  - not use `asc|desc`
                                   #  - not use `deferrable`
-                                  #  - be `unique`
 
 pg_constraint.conexclop           #REGOPERATOR_ARR of the CONSTRAINT's `with OP`
 
@@ -3181,7 +3179,7 @@ pg_index.indisprimary             #BOOL. Whether INDEX is used as `primary key`
 
 references "TABLE2"[("COL2")]     #COL_CONSTRAINT. "Foreign key"
                                   #Ensure every COL value references a COL2 value (but not inverse)
-                                  #On added|removed|updated values. On both COL|COL2.
+                                  #On added|removed|updated values (for both COL|COL2)
                                   #COL2 must be `unique` or `primary key`
                                   #Def COL2: TABLE2 primary key
                                   #Def "CONSTRAINT" name: "TABLE_COL_fkey"
@@ -3199,7 +3197,7 @@ references ... on delete ACTION   #When removing COL2 values, do ACTION:
                                   #  - restrict: fails, not deferrable
                                   #  - set default ["COL",...]: set COL values (def: all) to default
                                   #  - set null ["COL,"...]: set COL values (def: all) to null
-                                  #  - cascade: remove COL values too
+                                  #  - cascade: remove ROW
                                   #Implemented using a TFUNC:
                                   #  - on TABLE2 delete
                                   #  - `for each row`
@@ -3317,9 +3315,9 @@ UPDATING|DELETING ROWS ==>        #Updating|deleting:
 INHERITANCE STATEMENTS ==>        #This only applies to statements related to data
                                   #  - for: select|table, update|delete|truncate|merge and most of alter table
                                   #  - also: `lock` parent applies to child too, but not vice-versa
-                                  #  - unless `only "PARENT_TABLE"` is used
-                                  #     - can use "PARENT_TABLE*" to do the opposite, but it is default behavior
                                   #  - not for vacuum|analyze: i.e. must be done on each child TABLE
+                                  #Can prevent inherit by using `only "PARENT_TABLE"`
+                                  #  - can use "PARENT_TABLE*" to do the opposite, but it is default behavior
 
 CHILD INHERITS AND CANNOT CHANGE  #  - COL TYPE
  ==>                              #  - generated COL
@@ -3464,7 +3462,7 @@ alter table "PARENT_TABLE"
 alter index "PARENT_INDEX"
  attach partition "CHILD_INDEX"   #
 
-alter table ... detach partition  #Use a weaker lock that allow concurrent read|writes
+alter table ... detach partition  #Use a weaker lock that allows concurrent read|writes
  ... concurrently                 #Cannot be done inside a transaction, nor if there is a `default` partition
 alter table ... detach partition
  ... finalize                     #If a previous `concurrently` was canceled, finish it
@@ -3868,8 +3866,16 @@ select ... where BOOL_REXPR       #Returns no ROWs if BOOL is false
                                   #  - BOOL COL is not returned
                                   #  - ROWs with BOOL false are not returned
 
+                                  ┌──────────────┐
+                                  │   DISTINCT   │
+                                  └──────────────┘
+
 select all|distinct ...           #If `distinct`, ignores any ROW if any previous ROW2 is =
  [on (COL_REXPR,...)]             #Computes the values used to compare
+
+                                  ┌────────────┐
+                                  │   SAMPLE   │
+                                  └────────────┘
 
 select ... from "TABLE"
  tablesample SAMPLE_METHOD(...)   #Removes ROWs randomly
@@ -3905,14 +3911,12 @@ pg_index_column_has_property
 select ... order by ...,...       #Multiple sort values
 
 SCONF.enable_sort                 #"Explicit sort"
-                                  #Normal sort when using order COL,...
+                                  #Usual sort method when using order by COL,...
                                   #As opposed to incremental sort and ordered scans
-QUICKSORT ==>                     #Explicit sort method
-                                  #Faster in most cases
-TOP-N HEAPSORT ==>                #Explicit sort method
-                                  #Faster when using `order by` + `limit`
-EXTERNAL MERGE SORT ==>           #Explicit sort method
-                                  #Slower but preferred when ROW_SET is too large to fit in-memory (according to SCONF.work_mem)
+                                  #Following are the actual methods used, chosen by query planner
+QUICKSORT ==>                     #Faster in most cases
+TOP-N HEAPSORT ==>                #Faster when using `order by` + `limit`
+EXTERNAL MERGE SORT ==>           #Slower but preferred when ROW_SET is too large to fit in-memory (according to SCONF.work_mem)
 
 SCONF.enable_incremental_sort     #"Incremental sort".
                                   #When using order by COL,..., query planner sometimes sorts COL-by-COL instead of all COLs at once
@@ -3952,12 +3956,12 @@ select ... offset UINT [row[s]]   #Ignores first UINT rows
                                   #  - i.e. offset pagination vs cursor pagination
 
 select ... limit UINT|all
-select ...                        #Only returns first UINT rows, after `offset` applied
- fetch first [UINT] row[s] only   #Def UINT: 1
+select ... fetch first|next       #Only returns first UINT rows, after `offset` applied
+ [UINT] row[s] only               #Def UINT: 1
+                                  #first|next have the same behavior
 select ...                        #Returns any following ROW if:
  fetch ... row[s] with ties       #  - its COLs targeted by `order by`
                                   #  - are = than the previous ROW
-select ... fetch next ...         #Same as: select ... fetch first ...
 
                                   ┌──────────────────────┐
                                   │   CONCATENATE ROWS   │
