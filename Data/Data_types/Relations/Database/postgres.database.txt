@@ -4,10 +4,15 @@
                                   ┗━━━━━━━━━━━━━━┛
 
 TODO:
-  - continue going through this doc, refreshing it. Stopped at `psql`
-  - go through all `???` in this doc
   - read full official docs, and compare with this doc
-     - stopped at https://www.postgresql.org/docs/current/creating-cluster.html (for 15.3)
+     - stopped at (for version 15.3), chapter 19.3: https://www.postgresql.org/docs/15/server-start.html
+     - already done: "SQL commands" (VI. -> I.)
+  - go through changelogs from 15.3 to latest
+     - prefer adding a line towards documentation and use ???, and not documented it yet, if possible
+  - every chapter after `psql` (included) needs to be re-freshed
+  - go through all `???` in this doc
+  - break some of it in own doc, e.g. PL/PGSQL
+  - add summary sections
 
                                   ┌─────────────┐
                                   │   VERSION   │
@@ -1036,6 +1041,7 @@ join ... on BOOL_REXPR            #null -> false
                                   #  - ignored by inner join
                                   #  - kept as single ROWs by outer join
 if BOOL ...                       #null -> false (PL/PGSQL)
+assert BOOL                       #null -> false (PL/PGSQL)
 JSONPATH JBEXPR                   #null -> false
 
 distinct
@@ -4187,6 +4193,10 @@ update ... from FROM,...          #Allows using FROMs inside other parts of upda
                                   #  - >1 ROWs: `set ...` uses an unspecified filtered FROMS_ROW (to avoid)
 
 update ... where BOOL_REXPR       #Only sets values on ROWs with BOOL true
+
+suppress_redundant_updates        #TFUNC which prevents updates that set COL with its current value, i.e. do not change anything
+ _trigger()                       #Must be `before update` + `for each row`
+                                  #Meant as a performance optimization on TABLEs where this happens often
 
                                   ┌────────────┐
                                   │   DELETE   │
@@ -9053,7 +9063,8 @@ pg_config --htmldir               #Prints HTMLDIR location
                                   │   CLUSTER   │
                                   └─────────────┘
 
-initdb                            #Creates a CLUSTER, i.e. set of DATABASEs, managed by a single server
+initdb
+pg_ctl init[db]                   #Creates a CLUSTER, i.e. set of DATABASEs, managed by a single server
 
 initdb --no-sync|-N               #Do not wait for completion
 
@@ -9093,7 +9104,8 @@ ENVVAR PGDATA
 zPCONF.data_directory
 PIDF[1]
 VARDIR/CLUSTER                    #DATADIR, i.e. DIR with CLUSTER-specific data
-initdb --pgdata|-D DATADIR        #Created by initdb
+initdb --pgdata|-D DATADIR        #Created by initdb. Fails if already exists
+pg_ctl init[db] -D DATADIR        #Should avoid partition's top-level DIR, since it can create some permissions issues
 
 initdb --allow-group-access|-g    #Set DATADIR with permissions 0750
                                   #Otherwise 0700
@@ -10202,7 +10214,7 @@ raise LEVEL ...                   #Exception level among: exception (def), warni
                                   #LEVELs others than `exception` print on stderr, instead of throwing
                                   #LEVEL is matched by ZSCONF.log_min_messages and SCONF.client_min_messages
 
-assert BOOL[, 'MESSAGE']          #If true, call: raise ASSERT_FAILURE using message = 'MESSAGE'
+assert BOOL[, 'MESSAGE']          #If false, call: raise ASSERT_FAILURE using message = 'MESSAGE'
                                   #Def MESSAGE: 'assertion failed'
 PCONF.plpgsql.check_asserts       #BOOL (def: true). Enable `assert ...`
 
@@ -10328,7 +10340,7 @@ foreach VAR in array ARR
 loop ...
 end loop                          #
 
-foreach ARR_VAR slice NUM ...     #Iterates through NUM elements at a time,
+foreach ARR_VAR slice NUM ...     #Iterates through NUM elements at a time
 
 foreach VAR,... in array ROW      #
 
@@ -10538,8 +10550,8 @@ create trigger ...                #Whether to call FUNC:
  for each row|statement ...       #  - for each statement (def): once for all changed ROWs (even if none)
                                   #  - for each row: once per changed ROW
                                   #If VIEW:
-                                  #  - if `instead of`: must `for each row`
-                                  #  - otherwise: must `for each statement`
+                                  #  - if `instead of`: must use `for each row`
+                                  #  - else: must use `for each statement`
 
 create trigger ...                #Only call TFUNC when BOOL_REXPR true
  when (BOOL_REXPR) ...            #If `for each row`, can refer to `old|new` ROW_ALIAS
@@ -10626,10 +10638,6 @@ pg_tables.hastriggers             #BOOL. Whether TABLE has TFUNCs
 
 pg_get_triggerdef                 #Returns 'CREATE ...' statement that created TFUNC
  (TFUNC_OID[, BOOL])->STR         #BOOL (def: false) is prettify
-
-suppress_redundant_updates        #TFUNC which prevents updates that set COL with its current value, i.e. do not change anything
- _trigger()                       #Must be `before update` + `for each row`
-                                  #Meant as a performance optimization on TABLEs where this happens often
 
                                   ┌───────────────────┐
                                   │   EVENT TRIGGER   │
@@ -10851,15 +10859,15 @@ pg_publication_tables.rowfilter   #'BOOL_REXPR' of `where`
 alter table "TABLE"               #Sets which COLs identify ROWs
  replica identity ...             #Used by PUB|SUB when updating|deleting ROWs
                                   #Unless there are no update|delete transactions:
-                                  #  - PUB COLs must include replica identity COLs
+                                  #  - PUB COLs must include replica identity COLs (not `nothing`)
                                   #  - PUB `where` can only include replica identity COLs
                                   #Also used by WAL
 
 alter table "TABLE"
  replica identity default         #Default if primary key (and not pg_catalog.*): use those COLs
 
-alter table "TABLE"               #Default otherwise: use no COLs
- replica identity nothing         #Cannot be used with PUB, unless there are no update|delete transactions
+alter table "TABLE"
+ replica identity nothing         #Default otherwise: use no COLs
 
 alter table "TABLE"
  replica identity full            #Use all COLs. Slower.
@@ -11223,7 +11231,7 @@ TOPTS.user_catalog_table          #BOOL. Allow REPPLUGs to read this TABLE, even
 pg_replication_origin_*()         #Must be superuser
                                   #"Replication origin" is how a SUB can keep track of the last PG_LSN read from a PUB
                                   #This allows re-consuming any transaction not flushed to disk if SUB crashes
-                                  #This is automatically by SUBs, i.e. only needed when using logical decoding pg_*(...) directly
+                                  #This is automatically done by SUBs, i.e. only needed when using logical decoding pg_*(...) directly
 
 pg_replication_origin_create
  ("RORIGIN")->RORIGIN_OID         #
@@ -11683,7 +11691,7 @@ LCONF.ignore_system_indexes ???
                                   └─────────────┘
 
 BACKUP VS HIGH                    #Backup strategy (saving data) is different from, but should be combined with high availability
-AVAILABILITY ==>                  #strategy (quick restore of system if a node falls down)
+ AVAILABILITY ==>                 #strategy (quick restore of system if a node falls down)
 
 BACKUPS ==>                       #Either:
                                   #  - pg_dump: more stable from one PostgreSQL version to another, or from one architecture to another.
