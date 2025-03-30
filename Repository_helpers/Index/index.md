@@ -12,16 +12,19 @@
      - __Search tree__
        - [deno red black tree (Deno)](Architecture/Code_design/Algorithms/Search/Search_tree/deno_red_black_tree.deno.txt)
        - [search tree (Theory)](Architecture/Code_design/Algorithms/Search/Search_tree/search_tree.theory.txt)
+     - [bidirectional map (Deno)](Architecture/Code_design/Algorithms/Search/bidirectional_map.deno.txt)
      - [graph (Theory)](Architecture/Code_design/Algorithms/Search/graph.theory.txt)
      - [hash table (Theory)](Architecture/Code_design/Algorithms/Search/hash_table.theory.txt)
      - [linked list (Theory)](Architecture/Code_design/Algorithms/Search/linked_list.theory.txt)
      - [random access array (Theory)](Architecture/Code_design/Algorithms/Search/random_access_array.theory.txt)
      - [searching (Theory)](Architecture/Code_design/Algorithms/Search/searching.theory.txt)
+   - __Shuffle__
+     - [shuffle (Deno)](Architecture/Code_design/Algorithms/Shuffle/shuffle.deno.txt)
+     - [shuffle (Theory)](Architecture/Code_design/Algorithms/Shuffle/shuffle.theory.txt)
    - [algorithms (Theory)](Architecture/Code_design/Algorithms/algorithms.theory.txt)
    - [information theory (Theory)](Architecture/Code_design/Algorithms/information_theory.theory.txt)
    - [merge (Theory)](Architecture/Code_design/Algorithms/merge.theory.txt)
    - [shortest path (Theory)](Architecture/Code_design/Algorithms/shortest_path.theory.txt)
-   - [shuffle (Theory)](Architecture/Code_design/Algorithms/shuffle.theory.txt)
    - [sorting (Theory)](Architecture/Code_design/Algorithms/sorting.theory.txt)
  - __Requirements__
    - [abstraction (Theory)](Architecture/Code_design/Requirements/abstraction.theory.txt)
@@ -91,17 +94,18 @@
    - __CDN__
      - [deno land (Deno)](Architecture/Dependencies/Dependency_manager/CDN/deno_land.deno.txt)
      - [esm sh (SaaS)](Architecture/Dependencies/Dependency_manager/CDN/esm_sh.saas.txt)
+     - [jsr (Deno)](Architecture/Dependencies/Dependency_manager/CDN/jsr.deno.txt)
    - __Client__
      - [bower (Node CLI)](Architecture/Dependencies/Dependency_manager/Client/bower.node_cli.txt)
      - [corepack (Node)](Architecture/Dependencies/Dependency_manager/Client/corepack.node.txt)
      - __npm__
-       - [global\-dirs (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/global-dirs.node.txt)
+       - [global\-directory (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/global-directory.node.txt)
        - [normalize\-package\-data (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/normalize-package-data.node.txt)
        - [npm (Node CLI)](Architecture/Dependencies/Dependency_manager/Client/npm/npm.node_cli.txt)
        - [npx (CLI)](Architecture/Dependencies/Dependency_manager/Client/npm/npx.cli.txt)
-       - [read\-pkg\-up (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/read-pkg-up.node.txt)
+       - [read\-package\-up (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/read-package-up.node.txt)
        - [read\-pkg (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/read-pkg.node.txt)
-       - [write\-pkg (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/write-pkg.node.txt)
+       - [write\-package (Node)](Architecture/Dependencies/Dependency_manager/Client/npm/write-package.node.txt)
    - __Publish__
      - [np (Node)](Architecture/Dependencies/Dependency_manager/Publish/np.node.txt)
      - [publish\-please (Node)](Architecture/Dependencies/Dependency_manager/Publish/publish-please.node.txt)
@@ -124,7 +128,7 @@
 ### Functional
 
  - __Functors__
-   - [mimic\-fn (Node)](Architecture/Functional/Functors/mimic-fn.node.txt)
+   - [mimic\-function (Node)](Architecture/Functional/Functors/mimic-function.node.txt)
    - [node\-function\-name (Node)](Architecture/Functional/Functors/node-function-name.node.txt)
    - [rename\-fn (Node)](Architecture/Functional/Functors/rename-fn.node.txt)
  - __Immutable__
@@ -142,7 +146,9 @@
      - [deno map non nullish (Deno)](Architecture/Functional/Utilities/Filter_arrays/deno_map_non_nullish.deno.txt)
    - __Filter objects__
      - [deno filter (Deno)](Architecture/Functional/Utilities/Filter_objects/deno_filter.deno.txt)
+     - [deno omit pick (Deno)](Architecture/Functional/Utilities/Filter_objects/deno_omit_pick.deno.txt)
      - [filter\-obj (Node)](Architecture/Functional/Utilities/Filter_objects/filter-obj.node.txt)
+     - [json\-mask (Node)](Architecture/Functional/Utilities/Filter_objects/json-mask.node.txt)
      - [omit.js (Node)](Architecture/Functional/Utilities/Filter_objects/omit.js.node.txt)
    - __Find__
      - [deno find (Deno)](Architecture/Functional/Utilities/Find/deno_find.deno.txt)
@@ -153,6 +159,8 @@
      - [safe\-get\-prop (Node)](Architecture/Functional/Utilities/Get/safe-get-prop.node.txt)
    - __Group__
      - [deno group (Deno)](Architecture/Functional/Utilities/Group/deno_group.deno.txt)
+   - __Invert__
+     - [deno invert (Deno)](Architecture/Functional/Utilities/Invert/deno_invert.deno.txt)
    - __Join__
      - [deno join to string (Deno)](Architecture/Functional/Utilities/Join/deno_join_to_string.deno.txt)
    - __Map objects__
@@ -170,8 +178,6 @@
      - [deno partition (Deno)](Architecture/Functional/Utilities/Partition/deno_partition.deno.txt)
    - __Reduce__
      - [deno reduce (Deno)](Architecture/Functional/Utilities/Reduce/deno_reduce.deno.txt)
-   - __Sample__
-     - [deno sample (Deno)](Architecture/Functional/Utilities/Sample/deno_sample.deno.txt)
    - __Set operation__
      - [deno set operation (Deno)](Architecture/Functional/Utilities/Set_operation/deno_set_operation.deno.txt)
    - __Slice__
@@ -211,8 +217,6 @@
      - __Cancel__
        - [deno abort (Deno)](Architecture/Performance/Async/Promises/Cancel/deno_abort.deno.txt)
        - [p\-cancelable (Node)](Architecture/Performance/Async/Promises/Cancel/p-cancelable.node.txt)
-     - __Create__
-       - [deno deferred (Deno)](Architecture/Performance/Async/Promises/Create/deno_deferred.deno.txt)
      - __Detect__
        - [is\-promise (Node)](Architecture/Performance/Async/Promises/Detect/is-promise.node.txt)
        - [p\-is\-promise (Node)](Architecture/Performance/Async/Promises/Detect/p-is-promise.node.txt)
@@ -256,9 +260,12 @@
    - __Streams__
      - __Combine__
        - [deno stream combine (Deno)](Architecture/Performance/Async/Streams/Combine/deno_stream_combine.deno.txt)
+       - [merge\-streams (Node)](Architecture/Performance/Async/Streams/Combine/merge-streams.node.txt)
      - __Create__
        - [deno streams create (Deno)](Architecture/Performance/Async/Streams/Create/deno_streams_create.deno.txt)
        - [from (Node)](Architecture/Performance/Async/Streams/Create/from.node.txt)
+     - __Detect__
+       - [is\-stream (Node)](Architecture/Performance/Async/Streams/Detect/is-stream.node.txt)
      - __Errors__
        - [pump (Node)](Architecture/Performance/Async/Streams/Errors/pump.node.txt)
      - __JSON__
@@ -301,23 +308,31 @@
        - [etag (Node)](Architecture/Performance/Caching/HTTP/Conditional/etag.node.txt)
        - [fresh (Node)](Architecture/Performance/Caching/HTTP/Conditional/fresh.node.txt)
        - [http\-cache\-semantics (Node)](Architecture/Performance/Caching/HTTP/Conditional/http-cache-semantics.node.txt)
+     - __Vary__
+       - [vary (Node)](Architecture/Performance/Caching/HTTP/Vary/vary.node.txt)
    - __LRU__
+     - [deno lru (Deno)](Architecture/Performance/Caching/LRU/deno_lru.deno.txt)
      - [flru (JavaScript)](Architecture/Performance/Caching/LRU/flru.javascript.txt)
      - [lru\-cache (Node)](Architecture/Performance/Caching/LRU/lru-cache.node.txt)
      - [quick\-lru (JavaScript)](Architecture/Performance/Caching/LRU/quick-lru.javascript.txt)
      - [tiny\-lru (JavaScript)](Architecture/Performance/Caching/LRU/tiny-lru.javascript.txt)
    - __Memoization__
-     - [fast\-memoize (JavaScript)](Architecture/Performance/Caching/Memoization/fast-memoize.javascript.txt)
-     - [mem (JavaScript)](Architecture/Performance/Caching/Memoization/mem.javascript.txt)
-     - [memoize\-one (Node)](Architecture/Performance/Caching/Memoization/memoize-one.node.txt)
-     - [micro\-memoize (JavaScript)](Architecture/Performance/Caching/Memoization/micro-memoize.javascript.txt)
-     - [moize (JavaScript)](Architecture/Performance/Caching/Memoization/moize.javascript.txt)
+     - __Distributed__
+       - [powertools lambda idempotency (Node)](Architecture/Performance/Caching/Memoization/Distributed/powertools_lambda_idempotency.node.txt)
+     - __Process__
+       - [deno memoize (Deno)](Architecture/Performance/Caching/Memoization/Process/deno_memoize.deno.txt)
+       - [fast\-memoize (JavaScript)](Architecture/Performance/Caching/Memoization/Process/fast-memoize.javascript.txt)
+       - [memoize\-one (Node)](Architecture/Performance/Caching/Memoization/Process/memoize-one.node.txt)
+       - [memoize (JavaScript)](Architecture/Performance/Caching/Memoization/Process/memoize.javascript.txt)
+       - [micro\-memoize (JavaScript)](Architecture/Performance/Caching/Memoization/Process/micro-memoize.javascript.txt)
+       - [moize (JavaScript)](Architecture/Performance/Caching/Memoization/Process/moize.javascript.txt)
    - [caching (Theory)](Architecture/Performance/Caching/caching.theory.txt)
  - __Compression__
    - __HTTP__
      - [compressible (Node)](Architecture/Performance/Compression/HTTP/compressible.node.txt)
      - [compression (Express)](Architecture/Performance/Compression/HTTP/compression.express.txt)
      - [decompress\-response (Node)](Architecture/Performance/Compression/HTTP/decompress-response.node.txt)
+     - [middy http content encoding (Middy)](Architecture/Performance/Compression/HTTP/middy_http_content_encoding.middy.txt)
    - __Protocols__
      - __Brotli__
        - [brotli.js (Node)](Architecture/Performance/Compression/Protocols/Brotli/brotli.js.node.txt)
@@ -365,7 +380,10 @@
    - __Throttle__
      - __Rate limiting__
        - [express\-rate\-limit (Node)](Architecture/Performance/Limiting/Throttle/Rate_limiting/express-rate-limit.node.txt)
-     - [p\-throttle (Node)](Architecture/Performance/Limiting/Throttle/p-throttle.node.txt)
+       - [token bucket (Theory)](Architecture/Performance/Limiting/Throttle/Rate_limiting/token_bucket.theory.txt)
+     - __Utilities__
+       - [deno throttle (Deno)](Architecture/Performance/Limiting/Throttle/Utilities/deno_throttle.deno.txt)
+       - [p\-throttle (Node)](Architecture/Performance/Limiting/Throttle/Utilities/p-throttle.node.txt)
    - __Timeout__
      - __Server__
        - [connect\-timeout (Express)](Architecture/Performance/Limiting/Timeout/Server/connect-timeout.express.txt)
@@ -483,6 +501,10 @@
      - [keygrip (Node)](Architecture/Security/Cryptography/Key/keygrip.node.txt)
    - __Legal__
      - [crypto laws (Theory)](Architecture/Security/Cryptography/Legal/crypto_laws.theory.txt)
+   - __Random__
+     - [interval random (Deno)](Architecture/Security/Cryptography/Random/interval_random.deno.txt)
+     - [pgc32 (Deno)](Architecture/Security/Cryptography/Random/pgc32.deno.txt)
+     - [random (Theory)](Architecture/Security/Cryptography/Random/random.theory.txt)
    - __Theory__
      - [asymetric crypto (Theory)](Architecture/Security/Cryptography/Theory/asymetric_crypto.theory.txt)
      - [authentication (Theory)](Architecture/Security/Cryptography/Theory/authentication.theory.txt)
@@ -491,17 +513,46 @@
      - [crypto hardware (Theory)](Architecture/Security/Cryptography/Theory/crypto_hardware.theory.txt)
      - [crypto systems (Theory)](Architecture/Security/Cryptography/Theory/crypto_systems.theory.txt)
      - [information security (Theory)](Architecture/Security/Cryptography/Theory/information_security.theory.txt)
-     - [random (Theory)](Architecture/Security/Cryptography/Theory/random.theory.txt)
+ - __Privacy__
+   - __Fingerprinting__
+     - [fingerprinting (Theory)](Architecture/Security/Privacy/Fingerprinting/fingerprinting.theory.txt)
+   - __Referrer__
+     - [referrer (Theory)](Architecture/Security/Privacy/Referrer/referrer.theory.txt)
+   - [tracking (Theory)](Architecture/Security/Privacy/tracking.theory.txt)
  - __Security general__
+   - __Injection__
+     - __XSS__
+       - __CSP__
+         - [CSP (Theory)](Architecture/Security/Security_general/Injection/XSS/CSP/CSP.theory.txt)
+       - __Sanitize__
+         - __HTML__
+           - [deno escape (Deno)](Architecture/Security/Security_general/Injection/XSS/Sanitize/HTML/deno_escape.deno.txt)
+       - [xss (Theory)](Architecture/Security/Security_general/Injection/XSS/xss.theory.txt)
+     - [injection (Theory)](Architecture/Security/Security_general/Injection/injection.theory.txt)
+   - __Isolation__
+     - __Origins__
+       - __CORS__
+         - [cors (Express)](Architecture/Security/Security_general/Isolation/Origins/CORS/cors.express.txt)
+         - [cors (Theory)](Architecture/Security/Security_general/Isolation/Origins/CORS/cors.theory.txt)
+         - [middy cors (Middy)](Architecture/Security/Security_general/Isolation/Origins/CORS/middy_cors.middy.txt)
+       - __CSRF__
+         - [csrf (Theory)](Architecture/Security/Security_general/Isolation/Origins/CSRF/csrf.theory.txt)
+         - [csurf (Express)](Architecture/Security/Security_general/Isolation/Origins/CSRF/csurf.express.txt)
+       - [clickjacking (Theory)](Architecture/Security/Security_general/Isolation/Origins/clickjacking.theory.txt)
+       - [corp (Theory)](Architecture/Security/Security_general/Isolation/Origins/corp.theory.txt)
+       - [same origin policy (Theory)](Architecture/Security/Security_general/Isolation/Origins/same_origin_policy.theory.txt)
+       - [window opener (Theory)](Architecture/Security/Security_general/Isolation/Origins/window_opener.theory.txt)
+     - __Process__
+       - [web process isolation (Theory)](Architecture/Security/Security_general/Isolation/Process/web_process_isolation.theory.txt)
+   - __Permissions__
+     - [web permissions (Theory)](Architecture/Security/Security_general/Permissions/web_permissions.theory.txt)
+   - __Sniffing__
+     - [sniffing (Theory)](Architecture/Security/Security_general/Sniffing/sniffing.theory.txt)
    - __Web__
-     - [Web security (Theory)](Architecture/Security/Security_general/Web/Web_security.theory.txt)
-     - [cors (Express)](Architecture/Security/Security_general/Web/cors.express.txt)
-     - [csurf (Express)](Architecture/Security/Security_general/Web/csurf.express.txt)
      - [helmet (Express)](Architecture/Security/Security_general/Web/helmet.express.txt)
-   - __XSS__
-     - __Sanitize__
-       - __HTML__
-         - [deno escape (Deno)](Architecture/Security/Security_general/XSS/Sanitize/HTML/deno_escape.deno.txt)
+     - [middy\-security\-headers (Middy)](Architecture/Security/Security_general/Web/middy-security-headers.middy.txt)
+     - [web security (Theory)](Architecture/Security/Security_general/Web/web_security.theory.txt)
+   - [normalization security (Theory)](Architecture/Security/Security_general/normalization_security.theory.txt)
  - __Steganography__
    - [steganography (Theory)](Architecture/Security/Steganography/steganography.theory.txt)
    - [stego logiciels (CLI GUI)](Architecture/Security/Steganography/stego_logiciels.cli_gui.txt)
@@ -544,16 +595,21 @@
    - __General__
      - [gitter.im (SaaS)](Communication/Messaging/Chat/General/gitter.im.saas.txt)
  - __MIME__
-   - [fetch\-charset\-detection (JavaScript)](Communication/Messaging/MIME/fetch-charset-detection.javascript.txt)
-   - [iconv\-lite (Node)](Communication/Messaging/MIME/iconv-lite.node.txt)
-   - [jschardet (Node)](Communication/Messaging/MIME/jschardet.node.txt)
-   - [media\-typer (Node)](Communication/Messaging/MIME/media-typer.node.txt)
-   - [media types (Deno)](Communication/Messaging/MIME/media_types.deno.txt)
-   - [mime\-db (JSON)](Communication/Messaging/MIME/mime-db.json.txt)
-   - [mime\-types (Node)](Communication/Messaging/MIME/mime-types.node.txt)
-   - [mime (Node)](Communication/Messaging/MIME/mime.node.txt)
-   - [node\-chardet (Node)](Communication/Messaging/MIME/node-chardet.node.txt)
-   - [node\-iconv (Node)](Communication/Messaging/MIME/node-iconv.node.txt)
+   - __Content negotiation__
+     - [deno negotiation (Deno)](Communication/Messaging/MIME/Content_negotiation/deno_negotiation.deno.txt)
+     - [middy http content negotiation (Middy)](Communication/Messaging/MIME/Content_negotiation/middy_http_content_negotiation.middy.txt)
+     - [negotiator accepts (Node)](Communication/Messaging/MIME/Content_negotiation/negotiator_accepts.node.txt)
+   - __Content type__
+     - [content\-type (Node)](Communication/Messaging/MIME/Content_type/content-type.node.txt)
+   - __Extensions__
+     - [mime\-db (JSON)](Communication/Messaging/MIME/Extensions/mime-db.json.txt)
+     - [mime\-types (Node)](Communication/Messaging/MIME/Extensions/mime-types.node.txt)
+     - [mime (Node)](Communication/Messaging/MIME/Extensions/mime.node.txt)
+   - __Matching__
+     - [type\-is (Node)](Communication/Messaging/MIME/Matching/type-is.node.txt)
+   - __Parsing__
+     - [media\-typer (Node)](Communication/Messaging/MIME/Parsing/media-typer.node.txt)
+     - [media types (Deno)](Communication/Messaging/MIME/Parsing/media_types.deno.txt)
 
 ## Data
 
@@ -574,11 +630,13 @@
  - __ORM__
    - __Key value__
      - [keyv (Node)](Data/Data_management/ORM/Key_value/keyv.node.txt)
+     - [powertools lambda parameters (AWS)](Data/Data_management/ORM/Key_value/powertools_lambda_parameters.aws.txt)
    - __Many types__
      - [waterline (Node)](Data/Data_management/ORM/Many_types/waterline.node.txt)
  - __Validation__
    - __API request response__
      - [api request response validation (Summary)](Data/Data_management/Validation/API_request_response/api_request_response_validation.summary.txt)
+     - [middy validator (Middy)](Data/Data_management/Validation/API_request_response/middy_validator.middy.txt)
    - __DOM binding__
      - __JavaScript__
        - [backbone\-validation (Backbone)](Data/Data_management/Validation/DOM_binding/JavaScript/backbone-validation.backbone.txt)
@@ -586,19 +644,22 @@
    - __General__
      - __JSON schema__
        - [JSON schema (Format)](Data/Data_management/Validation/General/JSON_schema/JSON_schema.format.txt)
-       - [ajv (JavaScript)](Data/Data_management/Validation/General/JSON_schema/ajv.javascript.txt)
-       - [amanda (JavaScript)](Data/Data_management/Validation/General/JSON_schema/amanda.javascript.txt)
-       - [is\-my\-json\-valid (Node)](Data/Data_management/Validation/General/JSON_schema/is-my-json-valid.node.txt)
-       - [jayschema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/jayschema.javascript.txt)
-       - [jest\-json\-schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/jest-json-schema.javascript.txt)
-       - [jsen (JavaScript)](Data/Data_management/Validation/General/JSON_schema/jsen.javascript.txt)
-       - [jsonschema (Node)](Data/Data_management/Validation/General/JSON_schema/jsonschema.node.txt)
-       - [jsv (JavaScript)](Data/Data_management/Validation/General/JSON_schema/jsv.javascript.txt)
-       - [kriszyp json schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/kriszyp_json_schema.javascript.txt)
-       - [pg jsonschema (Postgres)](Data/Data_management/Validation/General/JSON_schema/pg_jsonschema.postgres.txt)
-       - [revalidator (JavaScript)](Data/Data_management/Validation/General/JSON_schema/revalidator.javascript.txt)
-       - [tv4 (JavaScript)](Data/Data_management/Validation/General/JSON_schema/tv4.javascript.txt)
-       - [z\-schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/z-schema.javascript.txt)
+       - __Registry__
+         - [eventbridge schemas (AWS)](Data/Data_management/Validation/General/JSON_schema/Registry/eventbridge_schemas.aws.txt)
+       - __Validation__
+         - [ajv (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/ajv.javascript.txt)
+         - [amanda (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/amanda.javascript.txt)
+         - [is\-my\-json\-valid (Node)](Data/Data_management/Validation/General/JSON_schema/Validation/is-my-json-valid.node.txt)
+         - [jayschema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/jayschema.javascript.txt)
+         - [jest\-json\-schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/jest-json-schema.javascript.txt)
+         - [jsen (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/jsen.javascript.txt)
+         - [jsonschema (Node)](Data/Data_management/Validation/General/JSON_schema/Validation/jsonschema.node.txt)
+         - [jsv (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/jsv.javascript.txt)
+         - [kriszyp json schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/kriszyp_json_schema.javascript.txt)
+         - [pg jsonschema (Postgres)](Data/Data_management/Validation/General/JSON_schema/Validation/pg_jsonschema.postgres.txt)
+         - [revalidator (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/revalidator.javascript.txt)
+         - [tv4 (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/tv4.javascript.txt)
+         - [z\-schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/Validation/z-schema.javascript.txt)
      - __JTD__
        - [JTD (Format)](Data/Data_management/Validation/General/JTD/JTD.format.txt)
      - [approvejs (JavaScript)](Data/Data_management/Validation/General/approvejs.javascript.txt)
@@ -630,6 +691,8 @@
    - [data format (Theory)](Data/Data_types/Data_format/data_format.theory.txt)
  - __Documents__
    - [mongodb (Database)](Data/Data_types/Documents/mongodb.database.txt)
+ - __Flat tables__
+   - [s3 tables (AWS)](Data/Data_types/Flat_tables/s3_tables.aws.txt)
  - __Key value__
    - __Structured__
      - [elasticache (Database)](Data/Data_types/Key_value/Structured/elasticache.database.txt)
@@ -637,7 +700,12 @@
  - __Offline__
    - __Databases__
      - __Client only__
-       - [localforage (JavaScript)](Data/Data_types/Offline/Databases/Client_only/localforage.javascript.txt)
+       - __Browser local__
+         - __Single value__
+           - [lowdb (Node)](Data/Data_types/Offline/Databases/Client_only/Browser_local/Single_value/lowdb.node.txt)
+       - __Browser only__
+         - __Key value__
+           - [localforage (JavaScript)](Data/Data_types/Offline/Databases/Client_only/Browser_only/Key_value/localforage.javascript.txt)
      - __Local__
        - __On disk__
          - [deno kv (Deno)](Data/Data_types/Offline/Databases/Local/On_disk/deno_kv.deno.txt)
@@ -650,6 +718,9 @@
    - __Population__
      - [backbone\-relational (Backbone)](Data/Data_types/Relations/Population/backbone-relational.backbone.txt)
      - [normalizr (JavaScript)](Data/Data_types/Relations/Population/normalizr.javascript.txt)
+   - __SQL__
+     - __Sanitize__
+       - [sql template tag (JavaScript)](Data/Data_types/Relations/SQL/Sanitize/sql_template_tag.javascript.txt)
 
 ### Files
 
@@ -659,7 +730,7 @@
  - __Files general__
    - __Archives__
      - __Tar__
-       - [deno archive (Deno)](Data/Files/Files_general/Archives/Tar/deno_archive.deno.txt)
+       - [deno tar (Deno)](Data/Files/Files_general/Archives/Tar/deno_tar.deno.txt)
        - [gulp\-tar (Gulp)](Data/Files/Files_general/Archives/Tar/gulp-tar.gulp.txt)
        - [node\-tar (Node)](Data/Files/Files_general/Archives/Tar/node-tar.node.txt)
        - [tar\-stream (Node)](Data/Files/Files_general/Archives/Tar/tar-stream.node.txt)
@@ -686,7 +757,7 @@
        - [path\-exists (Node)](Data/Files/Files_general/Commands/Check/path-exists.node.txt)
        - [path\-type (Node)](Data/Files/Files_general/Commands/Check/path-type.node.txt)
      - __Copy__
-       - [cp\-file (Node)](Data/Files/Files_general/Commands/Copy/cp-file.node.txt)
+       - [copy\-file (Node)](Data/Files/Files_general/Commands/Copy/copy-file.node.txt)
        - [cpy (Node)](Data/Files/Files_general/Commands/Copy/cpy.node.txt)
        - [deno copy (Deno)](Data/Files/Files_general/Commands/Copy/deno_copy.deno.txt)
      - __Create directory__
@@ -758,6 +829,7 @@
        - __Atomic__
          - [fast\-write\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/fast-write-atomic.node.txt)
          - [fs\-write\-stream\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/fs-write-stream-atomic.node.txt)
+         - [steno (Node)](Data/Files/Files_general/Commands/Write/Atomic/steno.node.txt)
          - [write\-file\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/write-file-atomic.node.txt)
          - [write\-files\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/write-files-atomic.node.txt)
        - __Generic__
@@ -766,7 +838,6 @@
      - [deno path (Deno)](Data/Files/Files_general/File_paths/deno_path.deno.txt)
    - __Filesystem abstraction__
      - [deno io (Deno)](Data/Files/Files_general/Filesystem_abstraction/deno_io.deno.txt)
-     - [deno resource (Deno)](Data/Files/Files_general/Filesystem_abstraction/deno_resource.deno.txt)
      - [file descriptor (Os)](Data/Files/Files_general/Filesystem_abstraction/file_descriptor.os.txt)
      - [vinyl (Node)](Data/Files/Files_general/Filesystem_abstraction/vinyl.node.txt)
    - [file uri scheme (Identifier)](Data/Files/Files_general/file_uri_scheme.identifier.txt)
@@ -861,6 +932,9 @@
    - [pretty\-format (JavaScript)](Data/Serialization/Print/pretty-format.javascript.txt)
  - __Query__
    - __JSON__
+     - __JMESPath__
+       - [jmespath (Format)](Data/Serialization/Query/JSON/JMESPath/jmespath.format.txt)
+       - [powertools lambda jmespath (Node)](Data/Serialization/Query/JSON/JMESPath/powertools_lambda_jmespath.node.txt)
      - __JSON path__
        - [dchester jsonpath (JavaScript)](Data/Serialization/Query/JSON/JSON_path/dchester_jsonpath.javascript.txt)
        - [f5io jsonpath (Node)](Data/Serialization/Query/JSON/JSON_path/f5io_jsonpath.node.txt)
@@ -874,6 +948,7 @@
        - [json pointer (Format)](Data/Serialization/Query/JSON/JSON_pointer/json_pointer.format.txt)
        - [jsonpointer.js (JavaScript)](Data/Serialization/Query/JSON/JSON_pointer/jsonpointer.js.javascript.txt)
        - [node\-jsonpointer (Node)](Data/Serialization/Query/JSON/JSON_pointer/node-jsonpointer.node.txt)
+     - [jsonata (Node)](Data/Serialization/Query/JSON/jsonata.node.txt)
  - __Schemaful__
    - __XML__
      - __Syntax__
@@ -881,6 +956,7 @@
  - __Simplistic__
    - __INI__
      - __Parser serializer__
+       - [deno ini (Deno)](Data/Serialization/Simplistic/INI/Parser_serializer/deno_ini.deno.txt)
        - [ini node (Node)](Data/Serialization/Simplistic/INI/Parser_serializer/ini_node.node.txt)
      - [ini (Format)](Data/Serialization/Simplistic/INI/ini.format.txt)
    - __TOML__
@@ -916,16 +992,20 @@
  - __Client server state__
    - __Cookies__
      - __Parsing__
-       - [cookie\-parser (Express)](Data/State/Client_server_state/Cookies/Parsing/cookie-parser.express.txt)
-       - [cookie (Node)](Data/State/Client_server_state/Cookies/Parsing/cookie.node.txt)
-       - [deno cookie (Deno)](Data/State/Client_server_state/Cookies/Parsing/deno_cookie.deno.txt)
-       - [jquery\-cookie (jQuery)](Data/State/Client_server_state/Cookies/Parsing/jquery-cookie.jquery.txt)
-       - [js\-cookie (JavaScript)](Data/State/Client_server_state/Cookies/Parsing/js-cookie.javascript.txt)
+       - __Request__
+         - [cookie\-parser (Express)](Data/State/Client_server_state/Cookies/Parsing/Request/cookie-parser.express.txt)
+         - [deno cookie (Deno)](Data/State/Client_server_state/Cookies/Parsing/Request/deno_cookie.deno.txt)
+         - [middy aws cookie parser (Middy)](Data/State/Client_server_state/Cookies/Parsing/Request/middy_aws_cookie_parser.middy.txt)
+       - __String__
+         - [cookie (Node)](Data/State/Client_server_state/Cookies/Parsing/String/cookie.node.txt)
+         - [jquery\-cookie (jQuery)](Data/State/Client_server_state/Cookies/Parsing/String/jquery-cookie.jquery.txt)
+         - [js\-cookie (JavaScript)](Data/State/Client_server_state/Cookies/Parsing/String/js-cookie.javascript.txt)
      - __Session__
        - [express\-session (Express)](Data/State/Client_server_state/Cookies/Session/express-session.express.txt)
      - __Sign__
        - [cookie\-signature (Node)](Data/State/Client_server_state/Cookies/Sign/cookie-signature.node.txt)
-       - [deno secure cookie map (Deno)](Data/State/Client_server_state/Cookies/Sign/deno_secure_cookie_map.deno.txt)
+       - [deno cookie sign (Deno)](Data/State/Client_server_state/Cookies/Sign/deno_cookie_sign.deno.txt)
+     - [cookies (Theory)](Data/State/Client_server_state/Cookies/cookies.theory.txt)
    - __General__
      - [connect\-flash (Express)](Data/State/Client_server_state/General/connect-flash.express.txt)
      - [express\-state (Express)](Data/State/Client_server_state/General/express-state.express.txt)
@@ -934,14 +1014,16 @@
  - __Identifiers__
    - __Decentralized__
      - __ULID__
+       - [ulid (Deno)](Data/State/Identifiers/Decentralized/ULID/ulid.deno.txt)
        - [ulid (Identifier)](Data/State/Identifiers/Decentralized/ULID/ulid.identifier.txt)
+       - [ulid (JavaScript)](Data/State/Identifiers/Decentralized/ULID/ulid.javascript.txt)
      - __UUID__
        - [deno uuid (Deno)](Data/State/Identifiers/Decentralized/UUID/deno_uuid.deno.txt)
        - [uuid (Identifier)](Data/State/Identifiers/Decentralized/UUID/uuid.identifier.txt)
        - [uuidjs (Node)](Data/State/Identifiers/Decentralized/UUID/uuidjs.node.txt)
+     - [cuid2 (JavaScript)](Data/State/Identifiers/Decentralized/cuid2.javascript.txt)
+     - [nanoid (JavaScript)](Data/State/Identifiers/Decentralized/nanoid.javascript.txt)
      - [snowflake (Identifier)](Data/State/Identifiers/Decentralized/snowflake.identifier.txt)
-     - [ulid (Deno)](Data/State/Identifiers/Decentralized/ulid.deno.txt)
-     - [ulid (JavaScript)](Data/State/Identifiers/Decentralized/ulid.javascript.txt)
    - __Full\-content__
      - [data uri (Identifier)](Data/State/Identifiers/Full-content/data_uri.identifier.txt)
    - __Hash__
@@ -958,6 +1040,8 @@
      - [urn (Identifier)](Data/State/Identifiers/Others/urn.identifier.txt)
    - __URI__
      - __Manipulation__
+       - __Path parameters__
+         - [middy\_http urlencode path parser (Middy)](Data/State/Identifiers/URI/Manipulation/Path_parameters/middy_http_urlencode_path_parser.middy.txt)
        - __Query string__
          - [qs (Node)](Data/State/Identifiers/URI/Manipulation/Query_string/qs.node.txt)
        - [uri.js (JavaScript)](Data/State/Identifiers/URI/Manipulation/uri.js.javascript.txt)
@@ -1027,6 +1111,7 @@
        - [colors.js (Node)](Design/Visual/Colors/Terminal/Apply/colors.js.node.txt)
        - [deno set colors (Deno)](Design/Visual/Colors/Terminal/Apply/deno_set_colors.deno.txt)
        - [kleur (Node)](Design/Visual/Colors/Terminal/Apply/kleur.node.txt)
+       - [yoctocolors (Node)](Design/Visual/Colors/Terminal/Apply/yoctocolors.node.txt)
      - __Detection__
        - [deno color enabled (Deno)](Design/Visual/Colors/Terminal/Detection/deno_color_enabled.deno.txt)
        - [supports\-color (Node)](Design/Visual/Colors/Terminal/Detection/supports-color.node.txt)
@@ -1078,36 +1163,83 @@
    - [cloudfront (AWS)](DevOps/Infrastructure/CDN/cloudfront.aws.txt)
  - __FaaS serverless__
    - __IaaS__
+     - __Batch__
+       - [middy\_sqs partial batch failure (Middy)](DevOps/Infrastructure/FaaS_serverless/IaaS/Batch/middy_sqs_partial_batch_failure.middy.txt)
+       - [powertools lambda batch (AWS)](DevOps/Infrastructure/FaaS_serverless/IaaS/Batch/powertools_lambda_batch.aws.txt)
      - [lambda (AWS)](DevOps/Infrastructure/FaaS_serverless/IaaS/lambda.aws.txt)
    - __PaaS__
      - [deno deploy (Deno)](DevOps/Infrastructure/FaaS_serverless/PaaS/deno_deploy.deno.txt)
  - __IaC__
    - __CloudFormation__
+     - __Assets__
+       - [cdk assets (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Assets/cdk_assets.aws.txt)
+     - __CDK__
+       - [cdk (AWS)](DevOps/Infrastructure/IaC/CloudFormation/CDK/cdk.aws.txt)
+     - __CI CD__
+       - [aws cloudformation github deploy (Github)](DevOps/Infrastructure/IaC/CloudFormation/CI_CD/aws_cloudformation_github_deploy.github.txt)
+       - [git sync (AWS)](DevOps/Infrastructure/IaC/CloudFormation/CI_CD/git_sync.aws.txt)
+       - [sam pipeline init (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CI_CD/sam_pipeline_init.cli.txt)
      - __CLI__
        - [aws\-cfn\-control (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/aws-cfn-control.cli.txt)
        - [cfn\-teleport (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/cfn-teleport.cli.txt)
        - [rain (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/rain.cli.txt)
        - [sceptre (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/sceptre.cli.txt)
      - __Core__
-       - [cdk (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Core/cdk.aws.txt)
+       - [cloud control (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Core/cloud_control.aws.txt)
        - [cloudformation (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Core/cloudformation.aws.txt)
+       - [cloudformation extensions (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Core/cloudformation_extensions.aws.txt)
+       - [serverless (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Core/serverless.cli.txt)
      - __Diagrams__
        - [aws\-cloudformation\-stacks\-graph (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Diagrams/aws-cloudformation-stacks-graph.cli.txt)
+       - [cdk\-dia (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Diagrams/cdk-dia.cli.txt)
        - [cfn\-diagram (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Diagrams/cfn-diagram.cli.txt)
+       - [rain\-tree (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Diagrams/rain-tree.cli.txt)
+     - __Diff__
+       - [cdk\-diff (Node)](DevOps/Infrastructure/IaC/CloudFormation/Diff/cdk-diff.node.txt)
+     - __Generate__
+       - [former2 (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Generate/former2.cli.txt)
      - __Linting__
+       - [cdk\-nag (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Linting/cdk-nag.aws.txt)
+       - [cdk\-validator\-cfnguard (Node)](DevOps/Infrastructure/IaC/CloudFormation/Linting/cdk-validator-cfnguard.node.txt)
+       - [cfn\-guard (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Linting/cfn-guard.aws.txt)
        - [cfn\-lint (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Linting/cfn-lint.aws.txt)
-     - __Policy__
-       - [cfn\-guard (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Policy/cfn-guard.aws.txt)
+     - __PR comment__
+       - [actions cfn diff (Github)](DevOps/Infrastructure/IaC/CloudFormation/PR_comment/actions_cfn_diff.github.txt)
+       - [cdk notifier (Github)](DevOps/Infrastructure/IaC/CloudFormation/PR_comment/cdk_notifier.github.txt)
+     - __SAM__
+       - [sam cli (AWS)](DevOps/Infrastructure/IaC/CloudFormation/SAM/sam_cli.aws.txt)
+       - [sam transform (AWS)](DevOps/Infrastructure/IaC/CloudFormation/SAM/sam_transform.aws.txt)
+       - [sar (AWS)](DevOps/Infrastructure/IaC/CloudFormation/SAM/sar.aws.txt)
+     - __Testing__
+       - __Integration__
+         - [cdk integ tests (Node)](DevOps/Infrastructure/IaC/CloudFormation/Testing/Integration/cdk_integ_tests.node.txt)
+       - __Unit__
+         - [cdk assertions (Node)](DevOps/Infrastructure/IaC/CloudFormation/Testing/Unit/cdk_assertions.node.txt)
+     - __UI__
+       - [cloudformation designer (AWS)](DevOps/Infrastructure/IaC/CloudFormation/UI/cloudformation_designer.aws.txt)
+       - [infrastructure composer (AWS)](DevOps/Infrastructure/IaC/CloudFormation/UI/infrastructure_composer.aws.txt)
    - __Pulumi__
      - [pulumi (SaaS)](DevOps/Infrastructure/IaC/Pulumi/pulumi.saas.txt)
      - [pulumi aws (SaaS)](DevOps/Infrastructure/IaC/Pulumi/pulumi_aws.saas.txt)
  - __IaaS__
    - __AWS__
-     - [aws api (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_api.aws.txt)
+     - [aws actions (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_actions.aws.txt)
+     - [aws auth (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_auth.aws.txt)
+     - [aws billing (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_billing.aws.txt)
      - [aws cli (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_cli.aws.txt)
      - [aws config (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_config.aws.txt)
+     - [aws endpoint (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_endpoint.aws.txt)
      - [aws general (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_general.aws.txt)
+     - [aws identifiers (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_identifiers.aws.txt)
      - [aws javascript (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_javascript.aws.txt)
+     - [aws list services (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_list_services.aws.txt)
+     - [aws network (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_network.aws.txt)
+     - [aws new service (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_new_service.aws.txt)
+     - [aws regions (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_regions.aws.txt)
+     - [aws signature (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_signature.aws.txt)
+     - [aws support (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_support.aws.txt)
+     - [aws tags (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_tags.aws.txt)
+     - [aws toolkit (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_toolkit.aws.txt)
    - __Compute__
      - [ec2 (AWS)](DevOps/Infrastructure/IaaS/Compute/ec2.aws.txt)
  - __PaaS__
@@ -1133,6 +1265,7 @@
      - [docker (CLI)](DevOps/Virtualization/Containers/Core_abstraction/docker.cli.txt)
      - [docker compose (Docker)](DevOps/Virtualization/Containers/Core_abstraction/docker_compose.docker.txt)
      - [is\-docker (Node)](DevOps/Virtualization/Containers/Core_abstraction/is-docker.node.txt)
+     - [is\-inside\-container (Node)](DevOps/Virtualization/Containers/Core_abstraction/is-inside-container.node.txt)
    - [containers (Theory)](DevOps/Virtualization/Containers/containers.theory.txt)
 
 ## Dev helpers
@@ -1237,10 +1370,17 @@
    - __Automatic logging__
      - __Errors__
        - [errorhandler (Express)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/errorhandler.express.txt)
+       - [finalhandler (Express)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/finalhandler.express.txt)
+       - [middy error handler (Middy)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/middy_error_handler.middy.txt)
      - __Network interaction__
        - [cloudtrail (AWS)](Dev_helpers/Insights/Logging/Automatic_logging/Network_interaction/cloudtrail.aws.txt)
    - __Dashboard__
      - [bugsnag (SaaS)](Dev_helpers/Insights/Logging/Dashboard/bugsnag.saas.txt)
+   - __Error shape__
+     - __HTTP__
+       - [deno http errors (Deno)](Dev_helpers/Insights/Logging/Error_shape/HTTP/deno_http_errors.deno.txt)
+       - [http errors (Node)](Dev_helpers/Insights/Logging/Error_shape/HTTP/http_errors.node.txt)
+       - [middy http error (Middy)](Dev_helpers/Insights/Logging/Error_shape/HTTP/middy_http_error.middy.txt)
    - __Logger__
      - __Server side__
        - [consola (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/consola.node.txt)
@@ -1248,16 +1388,14 @@
        - [deno log (Deno)](Dev_helpers/Insights/Logging/Logger/Server_side/deno_log.deno.txt)
        - [log4js (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/log4js.node.txt)
        - [pino (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/pino.node.txt)
+       - [powertools lambda logger (AWS)](Dev_helpers/Insights/Logging/Logger/Server_side/powertools_lambda_logger.aws.txt)
        - [signale (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/signale.node.txt)
        - [tracer (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/tracer.node.txt)
        - [winston (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/winston.node.txt)
    - __Request logging__
      - [express\-winston (Node)](Dev_helpers/Insights/Logging/Request_logging/express-winston.node.txt)
+     - [middy\_http input output logger (Middy)](Dev_helpers/Insights/Logging/Request_logging/middy_http_input_output_logger.middy.txt)
      - [morgan (Express)](Dev_helpers/Insights/Logging/Request_logging/morgan.express.txt)
-   - __Shape__
-     - __HTTP__
-       - [deno http errors (Deno)](Dev_helpers/Insights/Logging/Shape/HTTP/deno_http_errors.deno.txt)
-       - [http errors (Node)](Dev_helpers/Insights/Logging/Shape/HTTP/http_errors.node.txt)
  - __Monitoring__
    - __Custom metrics__
      - __Alerting__
@@ -1266,13 +1404,17 @@
      - __Alerting__
        - [cloudwatch alarms (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Alerting/cloudwatch_alarms.aws.txt)
      - __Collecting__
-       - [cloudwatch contributor insights (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/cloudwatch_contributor_insights.aws.txt)
-       - [cloudwatch metrics (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/cloudwatch_metrics.aws.txt)
-       - [cloudwatch observability (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/cloudwatch_observability.aws.txt)
-       - [hot\-shots (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/hot-shots.node.txt)
-       - [statsd\-client (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/statsd-client.node.txt)
-       - [statsd (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/statsd.node.txt)
-       - [statsd protocol (Protocol)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/statsd_protocol.protocol.txt)
+       - __Cloudwatch__
+         - [aws embedded metrics (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Cloudwatch/aws_embedded_metrics.aws.txt)
+         - [cloudwatch contributor insights (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Cloudwatch/cloudwatch_contributor_insights.aws.txt)
+         - [cloudwatch metrics (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Cloudwatch/cloudwatch_metrics.aws.txt)
+         - [cloudwatch observability (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Cloudwatch/cloudwatch_observability.aws.txt)
+         - [powertools lambda metrics (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Cloudwatch/powertools_lambda_metrics.aws.txt)
+       - __Statsd__
+         - [hot\-shots (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Statsd/hot-shots.node.txt)
+         - [statsd\-client (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Statsd/statsd-client.node.txt)
+         - [statsd (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Statsd/statsd.node.txt)
+         - [statsd protocol (Protocol)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/Statsd/statsd_protocol.protocol.txt)
      - __Collecting dashboard__
      - __Dashboard__
        - [cloudwatch dashboard (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Dashboard/cloudwatch_dashboard.aws.txt)
@@ -1410,6 +1552,7 @@
    - __Mocking__
      - __Dependencies__
        - [jest modules (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Dependencies/jest_modules.javascript.txt)
+       - [node\_test mock module (Node CLI)](Dev_helpers/Quality_assurance/Testing/Mocking/Dependencies/node_test_mock_module.node_cli.txt)
      - __Generic__
        - [chai\-spies (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/chai-spies.javascript.txt)
        - [deno mock (Deno)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/deno_mock.deno.txt)
@@ -1417,6 +1560,7 @@
        - [jest mocks (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/jest_mocks.javascript.txt)
        - [node tests mocks (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/node_tests_mocks.node.txt)
        - [sinon (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/sinon.node.txt)
+       - [tape mock (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/tape_mock.javascript.txt)
        - [testdouble (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/testdouble.javascript.txt)
      - __HTTP__
        - __Request mocking__
@@ -1424,6 +1568,7 @@
            - [jasmine ajax (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_mocking/Client_side/jasmine_ajax.javascript.txt)
            - [nise (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_mocking/Client_side/nise.javascript.txt)
          - __Server side__
+           - [interceptors (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_mocking/Server_side/interceptors.javascript.txt)
            - [nock (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_mocking/Server_side/nock.node.txt)
        - __Request stubs__
          - [node\-mocks\-http (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_stubs/node-mocks-http.node.txt)
@@ -1745,6 +1890,7 @@
        - [tsd\-jsdoc (Node)](Languages/Static_analysis/Type_checking/TypeScript/Ambient_generation/tsd-jsdoc.node.txt)
      - __Core__
        - [ts\-node (Node)](Languages/Static_analysis/Type_checking/TypeScript/Core/ts-node.node.txt)
+       - [tsx (Node)](Languages/Static_analysis/Type_checking/TypeScript/Core/tsx.node.txt)
        - [typescript (Language)](Languages/Static_analysis/Type_checking/TypeScript/Core/typescript.language.txt)
      - __Testing__
        - [deno test types (Deno)](Languages/Static_analysis/Type_checking/TypeScript/Testing/deno_test_types.deno.txt)
@@ -1867,6 +2013,8 @@
      - [request\-ip (Node)](Networking/Networking_protocols/Proxy/HTTP/request-ip.node.txt)
    - __Localhost__
      - [localtunnel (Node)](Networking/Networking_protocols/Proxy/Localhost/localtunnel.node.txt)
+ - __QUIC__
+   - [deno quic (Deno)](Networking/Networking_protocols/QUIC/deno_quic.deno.txt)
  - __Service discovery__
    - [DHCP (Protocol)](Networking/Networking_protocols/Service_discovery/DHCP.protocol.txt)
  - __TCP__
@@ -2001,9 +2149,6 @@
 
 ### Mobile
 
- - __Mobile only features__
-   - __Notifications__
-     - [sns (AWS)](Platforms/Mobile/Mobile_only_features/Notifications/sns.aws.txt)
  - __Mobile responsiveness__
    - [mobile strategy (Theory)](Platforms/Mobile/Mobile_responsiveness/mobile_strategy.theory.txt)
 
@@ -2047,10 +2192,12 @@
      - __Progress bars__
        - [ascii\-progress (Node)](Platforms/Terminal/CLI/Output/Progress_bars/ascii-progress.node.txt)
        - [cli\-progress (Node)](Platforms/Terminal/CLI/Output/Progress_bars/cli-progress.node.txt)
+       - [deno progress bar (Deno)](Platforms/Terminal/CLI/Output/Progress_bars/deno_progress_bar.deno.txt)
        - [gauge (Node)](Platforms/Terminal/CLI/Output/Progress_bars/gauge.node.txt)
        - [node\-progress (Node)](Platforms/Terminal/CLI/Output/Progress_bars/node-progress.node.txt)
      - __Spinners__
        - [cli\-spinners (Node)](Platforms/Terminal/CLI/Output/Spinners/cli-spinners.node.txt)
+       - [deno spinner (Deno)](Platforms/Terminal/CLI/Output/Spinners/deno_spinner.deno.txt)
        - [ora (Node)](Platforms/Terminal/CLI/Output/Spinners/ora.node.txt)
      - __Symbols__
        - [figures (Node)](Platforms/Terminal/CLI/Output/Symbols/figures.node.txt)
@@ -2076,6 +2223,7 @@
  - __Scraping crawling__
    - __Broken links__
      - [link\-check (Node)](RPC/Client/Scraping_crawling/Broken_links/link-check.node.txt)
+     - [lychee (CLI)](RPC/Client/Scraping_crawling/Broken_links/lychee.cli.txt)
    - __Crawler__
      - [simplecrawler (Node)](RPC/Client/Scraping_crawling/Crawler/simplecrawler.node.txt)
    - __Detection__
@@ -2163,25 +2311,30 @@
      - [openapi\-directory (Node GUI)](RPC/Inter_process/API_specification/Specifications_list/openapi-directory.node_gui.txt)
  - __HTTP__
    - __Body__
-     - [body\-parser (Express)](RPC/Inter_process/HTTP/Body/body-parser.express.txt)
-     - [multer (Express)](RPC/Inter_process/HTTP/Body/multer.express.txt)
-     - [multiparty (Express)](RPC/Inter_process/HTTP/Body/multiparty.express.txt)
-   - __Content negotiation__
-     - [content\-type (Node)](RPC/Inter_process/HTTP/Content_negotiation/content-type.node.txt)
-     - [deno negotiation (Deno)](RPC/Inter_process/HTTP/Content_negotiation/deno_negotiation.deno.txt)
-     - [negotiator accepts (Node)](RPC/Inter_process/HTTP/Content_negotiation/negotiator_accepts.node.txt)
-     - [type\-is (Node)](RPC/Inter_process/HTTP/Content_negotiation/type-is.node.txt)
-     - [vary (Node)](RPC/Inter_process/HTTP/Content_negotiation/vary.node.txt)
-   - __General__
-     - [send (Node)](RPC/Inter_process/HTTP/General/send.node.txt)
+     - __JSON__
+       - [middy\_http json body parser (Middy)](RPC/Inter_process/HTTP/Body/JSON/middy_http_json_body_parser.middy.txt)
+     - __Multipart__
+       - [middy\_http multipart body parser (Middy)](RPC/Inter_process/HTTP/Body/Multipart/middy_http_multipart_body_parser.middy.txt)
+       - [multer (Express)](RPC/Inter_process/HTTP/Body/Multipart/multer.express.txt)
+       - [multiparty (Express)](RPC/Inter_process/HTTP/Body/Multipart/multiparty.express.txt)
+     - __Multiple__
+       - [body\-parser (Express)](RPC/Inter_process/HTTP/Body/Multiple/body-parser.express.txt)
+     - __URL encode__
+       - [middy\_http urlencode body parser (Middy)](RPC/Inter_process/HTTP/Body/URL_encode/middy_http_urlencode_body_parser.middy.txt)
    - [HTTP (Protocol)](RPC/Inter_process/HTTP/HTTP.protocol.txt)
    - __Headers__
      - [content\-disposition (Node)](RPC/Inter_process/HTTP/Headers/content-disposition.node.txt)
+     - [deno headers (Deno)](RPC/Inter_process/HTTP/Headers/deno_headers.deno.txt)
      - [li (Node)](RPC/Inter_process/HTTP/Headers/li.node.txt)
      - [node\-parse\-prefer\-header (Node)](RPC/Inter_process/HTTP/Headers/node-parse-prefer-header.node.txt)
    - __Methods__
-     - [deno http methods (Deno)](RPC/Inter_process/HTTP/Methods/deno_http_methods.deno.txt)
+     - [deno methods (Deno)](RPC/Inter_process/HTTP/Methods/deno_methods.deno.txt)
      - [method\-override (Express)](RPC/Inter_process/HTTP/Methods/method-override.express.txt)
+   - __Response__
+     - __File__
+       - [send (Node)](RPC/Inter_process/HTTP/Response/File/send.node.txt)
+     - __String__
+       - [middy http response serializer (Middy)](RPC/Inter_process/HTTP/Response/String/middy_http_response_serializer.middy.txt)
    - __Statuses__
      - [deno http status (Deno)](RPC/Inter_process/HTTP/Statuses/deno_http_status.deno.txt)
      - [statuses (Node)](RPC/Inter_process/HTTP/Statuses/statuses.node.txt)
@@ -2241,22 +2394,40 @@
    - __Client side__
      - [react\-router (React)](RPC/Inter_process/URI_routing/Client_side/react-router.react.txt)
      - [redux\-simple\-router (Redux)](RPC/Inter_process/URI_routing/Client_side/redux-simple-router.redux.txt)
-   - __Matching__
-     - [path\-to\-regexp (Node)](RPC/Inter_process/URI_routing/Matching/path-to-regexp.node.txt)
    - __Server side__
-     - [vhost (Express)](RPC/Inter_process/URI_routing/Server_side/vhost.express.txt)
+     - __Hostname__
+       - [vhost (Express)](RPC/Inter_process/URI_routing/Server_side/Hostname/vhost.express.txt)
+     - __Path__
+       - [middy\-router (Middy)](RPC/Inter_process/URI_routing/Server_side/Path/middy-router.middy.txt)
+       - [path\-to\-regexp (Node)](RPC/Inter_process/URI_routing/Server_side/Path/path-to-regexp.node.txt)
+       - [urlpattern (Format)](RPC/Inter_process/URI_routing/Server_side/Path/urlpattern.format.txt)
 
 ### Messages tasks
 
+ - __Orchestration__
+   - [step functions (AWS)](RPC/Messages_tasks/Orchestration/step_functions.aws.txt)
+   - [swf (AWS)](RPC/Messages_tasks/Orchestration/swf.aws.txt)
+ - __PubSub__
+   - [eventbridge pipes (AWS)](RPC/Messages_tasks/PubSub/eventbridge_pipes.aws.txt)
+   - [eventbridge rules (AWS)](RPC/Messages_tasks/PubSub/eventbridge_rules.aws.txt)
+   - [sns (AWS)](RPC/Messages_tasks/PubSub/sns.aws.txt)
  - __Task coordination__
    - [orchestrator (Node)](RPC/Messages_tasks/Task_coordination/orchestrator.node.txt)
-   - [swf (AWS)](RPC/Messages_tasks/Task_coordination/swf.aws.txt)
    - [undertaker (Node)](RPC/Messages_tasks/Task_coordination/undertaker.node.txt)
  - __Task queue__
-   - [sqs (AWS)](RPC/Messages_tasks/Task_queue/sqs.aws.txt)
+   - __SQS__
+     - [goaws (Docker)](RPC/Messages_tasks/Task_queue/SQS/goaws.docker.txt)
+     - [sqs (AWS)](RPC/Messages_tasks/Task_queue/SQS/sqs.aws.txt)
+     - [sqs bulk loader (Node)](RPC/Messages_tasks/Task_queue/SQS/sqs_bulk_loader.node.txt)
+     - [sqs consumer (Node)](RPC/Messages_tasks/Task_queue/SQS/sqs_consumer.node.txt)
+     - [sqs grep (Node)](RPC/Messages_tasks/Task_queue/SQS/sqs_grep.node.txt)
+     - [sqs producer (Node)](RPC/Messages_tasks/Task_queue/SQS/sqs_producer.node.txt)
  - __Task scheduler__
    - __cron__
+     - [cron (Format)](RPC/Messages_tasks/Task_scheduler/cron/cron.format.txt)
+     - [deno cron (Deno)](RPC/Messages_tasks/Task_scheduler/cron/deno_cron.deno.txt)
      - [pg cron (Postgres)](RPC/Messages_tasks/Task_scheduler/cron/pg_cron.postgres.txt)
+   - [eventbridge scheduler (AWS)](RPC/Messages_tasks/Task_scheduler/eventbridge_scheduler.aws.txt)
 
 ### Realtime
 
@@ -2284,8 +2455,13 @@
    - __From database__
      - [postgrest (CLI)](RPC/Server/API_generation/From_database/postgrest.cli.txt)
  - __BaaS__
+   - __From API specification__
+     - [prisma (SaaS)](RPC/Server/BaaS/From_API_specification/prisma.saas.txt)
    - __From database__
      - [supabase (SaaS)](RPC/Server/BaaS/From_database/supabase.saas.txt)
+ - __Mock server__
+   - __Configuration driven__
+     - [json server (CLI)](RPC/Server/Mock_server/Configuration_driven/json_server.cli.txt)
  - __Server framework__
    - __MVC__
      - __Declarative__
@@ -2300,6 +2476,9 @@
      - __Minimalist__
        - [deno http (Deno)](RPC/Server/Server_framework/Micro_framework/Minimalist/deno_http.deno.txt)
        - [express (Node)](RPC/Server/Server_framework/Micro_framework/Minimalist/express.node.txt)
+     - __Serverless__
+       - __AWS Lambda__
+         - [middy (Node)](RPC/Server/Server_framework/Micro_framework/Serverless/AWS_Lambda/middy.node.txt)
  - __Static server__
    - __Directory listing__
      - [serve\-index (Express)](RPC/Server/Static_server/Directory_listing/serve-index.express.txt)
@@ -2501,7 +2680,6 @@
      - [IO filedescriptors](To_sort/Utilities_to_sort/C/Glibc/IO_filedescriptors.txt)
      - [IO memoire](To_sort/Utilities_to_sort/C/Glibc/IO_memoire.txt)
      - [IO normale](To_sort/Utilities_to_sort/C/Glibc/IO_normale.txt)
-     - [TODO](To_sort/Utilities_to_sort/C/Glibc/TODO.txt)
      - [attributs fichiers](To_sort/Utilities_to_sort/C/Glibc/attributs_fichiers.txt)
      - [caracteres](To_sort/Utilities_to_sort/C/Glibc/caracteres.txt)
      - [communication interprocess](To_sort/Utilities_to_sort/C/Glibc/communication_interprocess.txt)
@@ -2519,6 +2697,7 @@
      - [strings](To_sort/Utilities_to_sort/C/Glibc/strings.txt)
      - [systeme de fichier](To_sort/Utilities_to_sort/C/Glibc/systeme_de_fichier.txt)
      - [time](To_sort/Utilities_to_sort/C/Glibc/time.txt)
+     - [unfinished](To_sort/Utilities_to_sort/C/Glibc/unfinished.txt)
      - [wchar wstr](To_sort/Utilities_to_sort/C/Glibc/wchar_wstr.txt)
    - __Standard library__
      - __C89__
@@ -2603,6 +2782,8 @@
    - __Date popovers__
      - [jquery\-timeago (jQuery)](Types/Date_time/Date_time_general/Date_popovers/jquery-timeago.jquery.txt)
    - __Utilities__
+     - __Duration parsing__
+       - [parse\-ms (Node)](Types/Date_time/Date_time_general/Utilities/Duration_parsing/parse-ms.node.txt)
      - __Duration serializing__
        - [deno fmt duration (Deno)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/deno_fmt_duration.deno.txt)
        - [ms (Node CLI)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/ms.node_cli.txt)
@@ -2658,6 +2839,7 @@
        - [camelcase\-keys (Node)](Types/Strings/Strings_general/Manipulation/Case/camelcase-keys.node.txt)
        - [camelcase (Node)](Types/Strings/Strings_general/Manipulation/Case/camelcase.node.txt)
        - [decamelize (Node)](Types/Strings/Strings_general/Manipulation/Case/decamelize.node.txt)
+       - [deno case (Deno)](Types/Strings/Strings_general/Manipulation/Case/deno_case.deno.txt)
        - [humanize\-string (Node)](Types/Strings/Strings_general/Manipulation/Case/humanize-string.node.txt)
        - [titleize (Node)](Types/Strings/Strings_general/Manipulation/Case/titleize.node.txt)
      - __Concatenation__
@@ -2677,7 +2859,10 @@
          - [deno format newline (Deno)](Types/Strings/Strings_general/Manipulation/Newline/Format/deno_format_newline.deno.txt)
        - __Strip__
          - [strip\-final\-newline (Node)](Types/Strings/Strings_general/Manipulation/Newline/Strip/strip-final-newline.node.txt)
+     - __Reverse__
+       - [deno reverse (Deno)](Types/Strings/Strings_general/Manipulation/Reverse/deno_reverse.deno.txt)
      - __Slugify__
+       - [deno slugify (Deno)](Types/Strings/Strings_general/Manipulation/Slugify/deno_slugify.deno.txt)
        - [simov slugify (JavaScript)](Types/Strings/Strings_general/Manipulation/Slugify/simov_slugify.javascript.txt)
        - [sindresorhus slugify (Node)](Types/Strings/Strings_general/Manipulation/Slugify/sindresorhus_slugify.node.txt)
      - __Utilities__
@@ -2709,6 +2894,9 @@
        - __Tokenize__
          - [ret (Node)](Types/Strings/Strings_general/Matching/RegExp/Tokenize/ret.node.txt)
      - [balanced\-match (JavaScript)](Types/Strings/Strings_general/Matching/balanced-match.javascript.txt)
+   - __Search__
+     - __Fuzzy__
+       - [deno levenshtein (Deno)](Types/Strings/Strings_general/Search/Fuzzy/deno_levenshtein.deno.txt)
    - __Validation__
      - [validator.js (JavaScript)](Types/Strings/Strings_general/Validation/validator.js.javascript.txt)
 
@@ -2828,6 +3016,12 @@
        - [countries\-list (Node)](UX/Text/i18n/Country-dependent/Data/countries-list.node.txt)
    - __Encoding__
      - __All__
+       - __Detection__
+         - [jschardet (Node)](UX/Text/i18n/Encoding/All/Detection/jschardet.node.txt)
+         - [node chardet (Node)](UX/Text/i18n/Encoding/All/Detection/node_chardet.node.txt)
+       - __Encode decode__
+         - [iconv lite (Node)](UX/Text/i18n/Encoding/All/Encode_decode/iconv_lite.node.txt)
+         - [node iconv (Node)](UX/Text/i18n/Encoding/All/Encode_decode/node_iconv.node.txt)
        - [comparatif encodage (Theory)](UX/Text/i18n/Encoding/All/comparatif_encodage.theory.txt)
        - [histoire encodage (Theory)](UX/Text/i18n/Encoding/All/histoire_encodage.theory.txt)
      - __Non\-Unicode__
@@ -2838,13 +3032,15 @@
          - [unicode\-data (Node)](UX/Text/i18n/Encoding/Unicode/Data/unicode-data.node.txt)
        - __Detection__
          - [astral\-regex (Node)](UX/Text/i18n/Encoding/Unicode/Detection/astral-regex.node.txt)
-         - [is\-fullwidth\-code\-point (Node)](UX/Text/i18n/Encoding/Unicode/Detection/is-fullwidth-code-point.node.txt)
        - __Formats__
          - [unicode (Format)](UX/Text/i18n/Encoding/Unicode/Formats/unicode.format.txt)
          - [unicode language tags (Format)](UX/Text/i18n/Encoding/Unicode/Formats/unicode_language_tags.format.txt)
          - [utf16 ucs2 (Format)](UX/Text/i18n/Encoding/Unicode/Formats/utf16_ucs2.format.txt)
          - [utf32 ucs4 (Format)](UX/Text/i18n/Encoding/Unicode/Formats/utf32_ucs4.format.txt)
          - [utf8 (Format)](UX/Text/i18n/Encoding/Unicode/Formats/utf8.format.txt)
+       - __Width__
+         - [get\-east\-asian\-width (Node)](UX/Text/i18n/Encoding/Unicode/Width/get-east-asian-width.node.txt)
+         - [is\-fullwidth\-code\-point (Node)](UX/Text/i18n/Encoding/Unicode/Width/is-fullwidth-code-point.node.txt)
    - __General__
      - [c++ internationalization (C++)](UX/Text/i18n/General/c%2B%2B_internationalization.c%2B%2B.txt)
      - [gtk internationalization (GTK)](UX/Text/i18n/General/gtk_internationalization.gtk.txt)
@@ -2861,4 +3057,6 @@
          - [angular translate (Angular)](UX/Text/i18n/Translation/Library/Replacement/angular_translate.angular.txt)
          - [jed (JavaScript)](UX/Text/i18n/Translation/Library/Replacement/jed.javascript.txt)
    - [internationalization (Theory)](UX/Text/i18n/internationalization.theory.txt)
+
+[package\-lock (JSON)](package-lock.json)
 
