@@ -3058,5 +3058,3 @@
          - [jed (JavaScript)](UX/Text/i18n/Translation/Library/Replacement/jed.javascript.txt)
    - [internationalization (Theory)](UX/Text/i18n/internationalization.theory.txt)
 
-[package\-lock (JSON)](package-lock.json)
-

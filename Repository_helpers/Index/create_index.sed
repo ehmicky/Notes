@@ -14,7 +14,7 @@
 
 # Remove temporary files
 /swp\]/ d
-/package-lock\]/ d
+/package-lock/ d
 /~\]/ d
 
 # Decrease indent, since we removed top directory from listing
