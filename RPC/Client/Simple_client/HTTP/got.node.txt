@@ -64,7 +64,7 @@ OPTS.*                            #Same as HTTP.request(), i.e.:
                                   #  - path STR (def: "/"): including hash and query string
                                   #  - headers OBJ
                                   #  - auth STR: e.g. "auth:password"
-                                  #  - https.rejectUnauthorized|checkServerIdentity|certificateAuthority|certificate|key|passphrase|pfx|serverName
+                                  #  - https.rejectUnauthorized|checkServerIdentity|certificateAuthority|certificate|key|passphrase|pfx|serverName|secureOptions
                                   #  - agent[.http|https|http2] AGENT|false (def: globalAgent)
                                   #  - keepAlive[Msecs]: see AGENT
                                   #  - createConnection FUNC(...): see AGENT
@@ -114,10 +114,14 @@ OPTS.stringifyJson                #FUNC(VAL)->STR (def: JSON.stringify)
                                   #On 'json' responseType
 OPTS.decompress                   #BOOL (def: true)
                                   #Decompress response (using DECOMPRESS-RESPONSE, see its doc)
-                                  #Sets Accept-Encoding: gzip, deflate, br [C]
+                                  #Sets Accept-Encoding: gzip, deflate, br, zstd [C]
 OPTS.encoding                     #'ENCODING' (def: 'utf8')
 
 RES.ip                            #'IP'|undefined
+
+OPTS.strictContentLength          #BOOL (def: false). Throws ERROR with code 'ERR_HTTP_CONTENT_LENGTH_MISMATCH' if both:
+                                  #  - Content-Length [S] set
+                                  #  - but does not match response body size
 
                                   ┌───────────────┐
                                   │   REDIRECTS   │
@@ -291,7 +295,7 @@ GPROMISE|STREAM.on                #Response body download progress event OBJ:
                                   │   RESPONSE TIMES   │
                                   └────────────────────┘
 
-RES.timings                       #OBJ of how long request|response took:
+RES.timings                       #TIMINGS_OBJ of how long request|response took:
                                   #  - start NUM: request start
                                   #  - socket NUM: TCP socket created
                                   #  - lookup NUM: DNS lookup done
@@ -317,9 +321,13 @@ OPTS.hooks                        #Events callbacks. OBJ:
                                   #  - init ARR of FUNC(OPTS, OPTSI):
                                   #     - before each request
                                   #     - only fired if OPTS|OPTSI was provided
-                                  #  - beforeRequest ARR of FUNC(OPTS)[->>]
+                                  #  - beforeRequest ARR of FUNC(OPTS, OBJ)[->>]
+                                  #     - OBJ: retryCount NUM
                                   #  - beforeRedirect ARR of FUNC(OPTS, RES)[->>]: before HTTP redirection
                                   #  - beforeRetry ARR of FUNC(ERROR, NUM)[->>]
+                                  #  - beforeCache ARR of FUNC(RES)[->false]: before caching response
+                                  #     - can return false to skip caching
+                                  #     - can modify RES to change cache key, i.e. RES.headers
                                   #  - beforeError ARR of FUNC(ERROR)->[>]ERROR
                                   #  - afterResponse ARR of FUNC(RES, FUNC2(OPTS))->GPROMISE
                                   #     - FUNC2 retries with new OPTS
@@ -339,3 +347,29 @@ GPROMISE|STREAM.on
  ('response', FUNC(RES))          #
 
 GPROMISE|STREAM.off('EVENT', FUNC)#
+
+                                  ┌───────────┐
+                                  │   DEBUG   │
+                                  └───────────┘
+
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:request:request',          #Start
+ FUNC(OBJ))                       #OBJ: requestId STR, url 'URL', method 'METHOD'
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:request:start',            #Start of underlying HTTP request
+ FUNC(OBJ))                       #OBJ: requestId STR, url 'URL', method 'METHOD', headers OBJ
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:response:start',           #Response headers received
+ FUNC(OBJ))                       #OBJ: requestId STR, url 'URL', method 'METHOD', headers OBJ, statusCode NUM, isFromCache BOOL
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:response:end',             #Response body received
+ FUNC(OBJ))                       #OBJ: requestId STR, url 'URL', statusCode NUM, bodySize NUM|undefined, timings TIMINGS_OBJ|undefined
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:request:error',
+ FUNC(OBJ))                       #OBJ: requestId STR, url 'URL', error ERROR, timings TIMINGS_OBJ|undefined
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:request:retry',
+ FUNC(OBJ))                       #OBJ: requestId STR, retryCount NUM, delay NUM, error ERROR
+DIAGNOSTICS_CHANNEL.subscribe
+ ('got:response:redirect',
+ FUNC(OBJ))                       #OBJ: requestId STR, fromUrl 'URL', toUrl 'URL2', statusCode NUM
